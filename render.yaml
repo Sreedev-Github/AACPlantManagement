@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: aac-plant-api
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm run server
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: aac_plant_management
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: ADMIN_SETUP_KEY
+        sync: false
+      - key: UPLOAD_DIR
+        value: server/uploads
