@@ -727,7 +727,7 @@ export const DailyLogView = ({
       <div className="space-y-4">
         {displayedOrders.map((order) => (
           <Card key={order.id} className="p-5 flex flex-col md:flex-row md:items-start gap-5 hover:shadow-md transition-shadow relative">
-            {((role === 'sales' && order.orderDate >= getTodayString()) || (role === 'management' && order.status !== 'Dispatched')) && (
+            {((role === 'sales' && order.orderDate >= getTodayString()) || role === 'management') && (
               <div className="absolute top-4 right-4 flex gap-2 z-10">
                 <button onClick={(e) => { e.stopPropagation(); handleEditOrder(order); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Order"><Pencil className="w-4 h-4" /></button>
                 <button onClick={(e) => { e.stopPropagation(); triggerDelete(order.id); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete Order"><Trash2 className="w-4 h-4" /></button>
@@ -753,7 +753,7 @@ export const DailyLogView = ({
                 <p className="text-[10px] text-slate-400 uppercase font-bold mb-2">Documents</p>
                 <div className="flex flex-wrap gap-3">
                   {order.invoice ? <button onClick={() => openPreview('invoice', order.invoice, order.id, false, order.invoiceUrl)} className="flex items-center px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg hover:bg-indigo-100"><FileText className="w-3 h-3 mr-1.5" /> Invoice</button> : <span className="text-xs text-slate-300 italic">No Invoice</span>}
-                  {order.dispatchSlip ? <button onClick={() => openPreview('slip', order.dispatchSlip)} className="flex items-center px-3 py-1.5 bg-purple-50 text-purple-700 text-xs font-bold rounded-lg hover:bg-purple-100"><CheckCircle className="w-3 h-3 mr-1.5" /> Dispatch Slip</button> : <span className="text-xs text-slate-300 italic">No Slip</span>}
+                  {order.dispatchSlip ? <button onClick={() => openPreview('slip', order.dispatchSlip, order.id, false, order.dispatchSlipUrl)} className="flex items-center px-3 py-1.5 bg-purple-50 text-purple-700 text-xs font-bold rounded-lg hover:bg-purple-100"><CheckCircle className="w-3 h-3 mr-1.5" /> Dispatch Slip</button> : <span className="text-xs text-slate-300 italic">No Slip</span>}
                 </div>
               </div>
             </div>

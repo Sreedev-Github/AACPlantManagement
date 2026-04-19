@@ -7,7 +7,7 @@ import { httpError } from '../utils/httpError.js';
 
 const router = Router();
 
-router.use(requireAuth);
+router.use('/documents', requireAuth);
 
 router.get('/documents/:id/download', async (req, res, next) => {
   try {

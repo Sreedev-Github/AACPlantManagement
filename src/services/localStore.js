@@ -8,6 +8,7 @@ const getRuntimeApiBase = () => {
 
 const API_BASE = getRuntimeApiBase();
 const TOKEN_KEY = 'aac_auth_token';
+let legacyStateAccessBlocked = false;
 
 const emptyState = {
   orders: [],
@@ -50,8 +51,19 @@ const requestJSON = async (url, options = {}) => {
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      clearAuthToken();
+    }
+
+    if (response.status === 403 && url.includes('/state')) {
+      legacyStateAccessBlocked = true;
+    }
+
     const message = payload?.message || `Request failed with status ${response.status}`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.statusCode = response.status;
+    error.url = url;
+    throw error;
   }
 
   return payload;
@@ -73,6 +85,10 @@ export const login = async ({ username, password }) => {
 };
 
 export const getCurrentUser = async () => {
+  if (!getAuthToken()) {
+    throw new Error('No active session.');
+  }
+
   const payload = await requestJSON(`${API_BASE}/auth/me`);
   if (!payload?.user) {
     throw new Error('No active session.');
@@ -90,7 +106,11 @@ export const loadInitialState = async () => {
       rawStock: state.rawStock ?? {},
       finishedStock: state.finishedStock ?? {},
     };
-  } catch (_err) {
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      legacyStateAccessBlocked = true;
+    }
+
     return emptyState;
   }
 };
@@ -118,11 +138,29 @@ export const updateOrder = async (orderId, updates) => {
   return payload?.order;
 };
 
+export const updateDispatchedOrder = async (orderId, updates) => {
+  const payload = await requestJSON(`${API_BASE}/orders/${orderId}/dispatched-edit`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return payload?.order;
+};
+
 export const transitionOrder = async (orderId, toStatus, data = {}) => {
   const payload = await requestJSON(`${API_BASE}/orders/${orderId}/transition`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ toStatus, data }),
+  });
+  return payload?.order;
+};
+
+export const dispatchOrder = async (orderId, data = {}) => {
+  const payload = await requestJSON(`${API_BASE}/orders/${orderId}/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
   });
   return payload?.order;
 };
@@ -159,13 +197,27 @@ export const deleteOrder = async (orderId) => {
   });
 };
 
-const updateRemoteState = async (key, value) => requestJSON(`${API_BASE}/state/${key}`, {
-  method: 'PUT',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ value }),
-});
+const updateRemoteState = async (key, value) => {
+  if (legacyStateAccessBlocked) {
+    return undefined;
+  }
 
-const saveAndSync = (key) => (value) => updateRemoteState(key, value).catch(() => undefined);
+  return requestJSON(`${API_BASE}/state/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+};
+
+const saveAndSync = (key) => async (value) => {
+  try {
+    await updateRemoteState(key, value);
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      legacyStateAccessBlocked = true;
+    }
+  }
+};
 
 export const saveOrders = saveAndSync('orders');
 export const saveDieselEntries = saveAndSync('dieselEntries');

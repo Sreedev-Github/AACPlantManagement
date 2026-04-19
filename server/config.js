@@ -6,9 +6,11 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
+const configEnvPath = path.resolve(projectRoot, 'config', 'config.env');
 
 const envCandidates = [
   process.env.ENV_PATH,
+  configEnvPath,
   path.resolve(process.cwd(), '.env'),
   path.resolve(projectRoot, '.env'),
   path.resolve(__dirname, '.env'),
@@ -51,12 +53,21 @@ const getJwtSecret = () => {
   throw new Error('Missing required environment variable: JWT_SECRET');
 };
 
+const getSqlServerConfig = () => {
+  const url = getEnv('SQLSERVER_URL', '');
+  if (!url) {
+    throw new Error('Missing required environment variable: SQLSERVER_URL');
+  }
+
+  return { url };
+};
+
 export const config = {
   nodeEnv: getEnv('NODE_ENV', 'development'),
   port: Number(getEnv('PORT', '4000')),
-  mongoUri: getRequiredEnv('MONGODB_URI'),
-  mongoDb: getEnv('MONGODB_DB', 'aac_plant_management'),
+  sqlserver: getSqlServerConfig(),
   jwtSecret: getJwtSecret(),
   jwtExpiresIn: getEnv('JWT_EXPIRES_IN', '8h'),
   uploadDir: getEnv('UPLOAD_DIR', path.resolve(process.cwd(), 'server', 'uploads')),
 };
+

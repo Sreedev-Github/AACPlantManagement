@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmModal, DispatchModal, DocPreviewModal, ImportModal } from './components/modals/AppModals';
 import {
   AppHeader,
@@ -34,6 +34,7 @@ import {
 import {
   clearAuthToken,
   createOrder,
+  dispatchOrder,
   deleteOrder,
   getCurrentUser,
   loadInitialState,
@@ -45,10 +46,15 @@ import {
   saveRawStock,
   transitionOrder,
   uploadInvoice,
+  updateDispatchedOrder,
   updateOrder,
 } from './services/localStore';
 
+// Set to 'pdf' or 'jpg' to control generated dispatch slip output format.
+const DISPATCH_SLIP_OUTPUT_FORMAT = 'pdf';
+
 export default function App() {
+  const hasBootstrappedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -112,8 +118,15 @@ export default function App() {
     { role: 'Production', username: 'prod1', password: 'prod1234' },
   ]), []);
 
-  const loadAppData = async () => {
-    const initial = await loadInitialState();
+  const canUseLegacyState = (userRole) => ['management', 'production'].includes(String(userRole || '').toLowerCase());
+
+  const loadAppData = async (userRole = null) => {
+    const initial = canUseLegacyState(userRole) ? await loadInitialState() : {
+      dieselEntries: [],
+      logs: [],
+      rawStock: {},
+      finishedStock: {},
+    };
     let remoteOrders = [];
 
     try {
@@ -131,11 +144,14 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (hasBootstrappedRef.current) return;
+    hasBootstrappedRef.current = true;
+
     const bootstrap = async () => {
       try {
         const currentUser = await getCurrentUser();
         setRole(currentUser.role || null);
-        await loadAppData();
+        await loadAppData(currentUser.role || null);
       } catch (_err) {
         clearAuthToken();
         setRole(null);
@@ -154,7 +170,7 @@ export default function App() {
     try {
       const loggedInUser = await login({ username, password });
       setRole(loggedInUser.role || null);
-      await loadAppData();
+      await loadAppData(loggedInUser.role || null);
     } catch (error) {
       setAuthError(error.message || 'Login failed');
       clearAuthToken();
@@ -176,20 +192,20 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (hydrated) saveDieselEntries(dieselEntries);
-  }, [dieselEntries, hydrated]);
+    if (hydrated && canUseLegacyState(role)) saveDieselEntries(dieselEntries);
+  }, [dieselEntries, hydrated, role]);
 
   useEffect(() => {
-    if (hydrated) saveLogs(logs);
-  }, [logs, hydrated]);
+    if (hydrated && canUseLegacyState(role)) saveLogs(logs);
+  }, [logs, hydrated, role]);
 
   useEffect(() => {
-    if (hydrated) saveRawStock(rawStock);
-  }, [rawStock, hydrated]);
+    if (hydrated && canUseLegacyState(role)) saveRawStock(rawStock);
+  }, [rawStock, hydrated, role]);
 
   useEffect(() => {
-    if (hydrated) saveFinishedStock(finishedStock);
-  }, [finishedStock, hydrated]);
+    if (hydrated && canUseLegacyState(role)) saveFinishedStock(finishedStock);
+  }, [finishedStock, hydrated, role]);
 
   const showToast = (msg) => {
     setAppMsg(msg);
@@ -197,7 +213,21 @@ export default function App() {
   };
 
   const patchOrderAndSync = async (orderId, updates) => {
-    const updatedOrder = await updateOrder(orderId, updates);
+    let updatedOrder;
+
+    try {
+      updatedOrder = await updateOrder(orderId, updates);
+    } catch (error) {
+      const message = String(error?.message || '').toLowerCase();
+      const blockedDispatchedEdit = message.includes('dispatched orders cannot be edited');
+
+      if (role === 'management' && blockedDispatchedEdit) {
+        updatedOrder = await updateDispatchedOrder(orderId, updates);
+      } else {
+        throw error;
+      }
+    }
+
     setOrders((prev) => prev.map((order) => (order.id === orderId ? updatedOrder : order)));
     return updatedOrder;
   };
@@ -890,7 +920,16 @@ export default function App() {
 
   const openPreview = (fileType, fileName, orderId = null, canApprove = false, fileUrl = null) => {
     const orderData = orders.find((o) => o.id === orderId);
-    setPreviewFile({ fileType, fileName, orderId, canApprove, orderData, fileUrl });
+    const resolvedFileUrl = fileUrl
+      || (fileType === 'invoice' ? orderData?.invoiceUrl : orderData?.dispatchSlipUrl)
+      || null;
+
+    if (resolvedFileUrl && !canApprove) {
+      window.open(resolvedFileUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    setPreviewFile({ fileType, fileName, orderId, canApprove, orderData, fileUrl: resolvedFileUrl });
   };
 
   const handleApproveFromPreview = async () => {
@@ -901,10 +940,26 @@ export default function App() {
   };
 
   const handleDispatchSubmit = async (orderId, data) => {
-    const slipName = `DS-${orderId.substring(0, 4)}-${Math.floor(Math.random() * 1000)}.pdf`;
-    await updateStatus(orderId, 'Dispatched', { ...data, dispatchSlip: slipName });
-    logAction('DISPATCH', `Dispatched Order ${orderId} with slip ${slipName}`);
-    setDispatchModalOrderId(null);
+    const latestOrder = orders.find((order) => order.id === orderId);
+    if (latestOrder && latestOrder.status !== 'Approved') {
+      showToast(`Cannot dispatch. Current status is ${latestOrder.status}. Refresh and try again.`);
+      return;
+    }
+
+    try {
+      const updatedOrder = await dispatchOrder(orderId, {
+        ...data,
+        slipFormat: DISPATCH_SLIP_OUTPUT_FORMAT,
+      });
+
+      setOrders((prev) => prev.map((order) => (order.id === orderId ? updatedOrder : order)));
+      logAction('DISPATCH', `Dispatched Order ${orderId} with slip ${updatedOrder?.dispatchSlip || 'generated'}`);
+      showToast(`Dispatched with ${DISPATCH_SLIP_OUTPUT_FORMAT.toUpperCase()} slip`);
+      setDispatchModalOrderId(null);
+    } catch (error) {
+      console.error('Dispatch failed:', error);
+      showToast(error.message || 'Failed to dispatch order');
+    }
   };
 
   const getStats = () => {
@@ -1042,7 +1097,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 pb-20 relative">
       {appMsg && <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-slate-800 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold animate-bounce">{appMsg}</div>}
-      {previewFile && (<DocPreviewModal fileType={previewFile.fileType} fileName={previewFile.fileName} canApprove={previewFile.canApprove} onClose={() => setPreviewFile(null)} onApprove={handleApproveFromPreview} orderData={previewFile.orderData} />)}
+      {previewFile && (<DocPreviewModal fileType={previewFile.fileType} fileName={previewFile.fileName} fileUrl={previewFile.fileUrl} canApprove={previewFile.canApprove} onClose={() => setPreviewFile(null)} onApprove={handleApproveFromPreview} orderData={previewFile.orderData} />)}
       {deleteConfirmId && (<ConfirmModal title="Delete Order?" message="This action cannot be undone. Are you sure?" onConfirm={confirmDeleteOrder} onCancel={() => setDeleteConfirmId(null)} />)}
       {showImportModal && (<ImportModal onClose={() => setShowImportModal(false)} onImport={handleBulkImport} />)}
       {dispatchOrderObj && (<DispatchModal order={dispatchOrderObj} onClose={() => setDispatchModalOrderId(null)} onSubmit={handleDispatchSubmit} logs={logs} />)}

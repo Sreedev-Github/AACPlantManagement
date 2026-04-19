@@ -1,10 +1,11 @@
-import { ObjectId } from 'mongodb';
 import { Router } from 'express';
 
+import { config } from '../config.js';
 import { ORDER_STATUSES, ROLES } from '../constants.js';
 import { collections } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRoles } from '../middleware/roles.js';
+import { generateDispatchSlip, resolveDispatchSlipFormat } from '../services/dispatchSlip.js';
 import {
   FINAL_STATUS,
   ORDER_ACTIONS,
@@ -41,12 +42,142 @@ const actorFromReq = (req) => ({
   role: req.user.role,
 });
 
+const hasDispatchValue = (value) => value !== undefined && value !== null && String(value).trim() !== '';
+
+const coalesceDispatchField = (payload, order, field, fallbackOrderFields = []) => {
+  if (hasDispatchValue(payload[field])) return payload[field];
+  if (hasDispatchValue(order[field])) return order[field];
+
+  for (const fallbackField of fallbackOrderFields) {
+    if (hasDispatchValue(order[fallbackField])) {
+      return order[fallbackField];
+    }
+  }
+
+  return payload[field] ?? order[field] ?? null;
+};
+
+const trimIfPresent = (value) => {
+  if (value === undefined || value === null) return value;
+  return String(value).trim();
+};
+
+const parseNumberOrNull = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseTruckType = (value) => {
+  if (!hasDispatchValue(value)) return null;
+  const digits = String(value).replace(/\D/gu, '');
+  if (!digits) return null;
+  const parsed = Number(digits);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getSizeVolume = (size) => {
+  const parts = String(size || '')
+    .split(/x/iu)
+    .map((item) => Number(item.trim()));
+
+  if (parts.length !== 3 || parts.some((item) => !Number.isFinite(item) || item <= 0)) return null;
+
+  const [lengthMm, widthMm, heightMm] = parts;
+  return (lengthMm / 1000) * (widthMm / 1000) * (heightMm / 1000);
+};
+
+const derivePiecesLoaded = (cbm, size) => {
+  const cbmValue = parseNumberOrNull(cbm);
+  const volume = getSizeVolume(size);
+  if (!Number.isFinite(cbmValue) || cbmValue <= 0 || !Number.isFinite(volume) || volume <= 0) return null;
+
+  return Math.max(0, Math.round(cbmValue / volume));
+};
+
+const normalizeWeight = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return '0.000';
+  return parsed.toFixed(3);
+};
+
+const buildDispatchPayload = (order, payload) => {
+  const merged = {
+    consignee: coalesceDispatchField(payload, order, 'consignee', ['client']),
+    address: coalesceDispatchField(payload, order, 'address', ['location']),
+    contactPerson: coalesceDispatchField(payload, order, 'contactPerson'),
+    size: coalesceDispatchField(payload, order, 'size'),
+    cbm: coalesceDispatchField(payload, order, 'cbm'),
+    piecesLoaded: coalesceDispatchField(payload, order, 'piecesLoaded'),
+    bjm: coalesceDispatchField(payload, order, 'bjm'),
+    bjmRate: coalesceDispatchField(payload, order, 'bjmRate'),
+    vehicle: coalesceDispatchField(payload, order, 'vehicle'),
+    truckType: coalesceDispatchField(payload, order, 'truckType'),
+    transporter: coalesceDispatchField(payload, order, 'transporter'),
+    driverName: coalesceDispatchField(payload, order, 'driverName'),
+    driverContact: coalesceDispatchField(payload, order, 'driverContact'),
+    loadStartTime: coalesceDispatchField(payload, order, 'loadStartTime'),
+    loadFinishTime: coalesceDispatchField(payload, order, 'loadFinishTime'),
+    loadingBy: coalesceDispatchField(payload, order, 'loadingBy'),
+    unloadingBy: coalesceDispatchField(payload, order, 'unloadingBy'),
+    grossWeight: coalesceDispatchField(payload, order, 'grossWeight'),
+    tareWeight: coalesceDispatchField(payload, order, 'tareWeight'),
+    netWt: coalesceDispatchField(payload, order, 'netWt'),
+    tripKm: coalesceDispatchField(payload, order, 'tripKm'),
+    hsd: coalesceDispatchField(payload, order, 'hsd'),
+  };
+
+  merged.consignee = trimIfPresent(merged.consignee);
+  merged.address = trimIfPresent(merged.address);
+  merged.contactPerson = trimIfPresent(merged.contactPerson);
+  merged.size = trimIfPresent(merged.size) || '600x200x150';
+  merged.vehicle = trimIfPresent(merged.vehicle);
+  merged.transporter = trimIfPresent(merged.transporter);
+  merged.driverName = trimIfPresent(merged.driverName);
+  merged.driverContact = trimIfPresent(merged.driverContact);
+  merged.loadStartTime = trimIfPresent(merged.loadStartTime);
+  merged.loadFinishTime = trimIfPresent(merged.loadFinishTime);
+  merged.loadingBy = trimIfPresent(merged.loadingBy);
+  merged.unloadingBy = trimIfPresent(merged.unloadingBy);
+
+  merged.cbm = parseNumberOrNull(merged.cbm) ?? 0;
+  merged.bjm = parseNumberOrNull(merged.bjm) ?? 0;
+  merged.bjmRate = parseNumberOrNull(merged.bjmRate) ?? 0;
+  merged.tripKm = parseNumberOrNull(merged.tripKm);
+  merged.hsd = parseNumberOrNull(merged.hsd);
+  merged.truckType = parseTruckType(merged.truckType) ?? parseTruckType(order.vehicleType) ?? 0;
+
+  const parsedPiecesLoaded = parseNumberOrNull(merged.piecesLoaded);
+  merged.piecesLoaded = Number.isFinite(parsedPiecesLoaded)
+    ? parsedPiecesLoaded
+    : (derivePiecesLoaded(merged.cbm, merged.size) ?? 0);
+
+  merged.grossWeight = normalizeWeight(merged.grossWeight);
+  merged.tareWeight = normalizeWeight(merged.tareWeight);
+  merged.netWt = normalizeWeight(merged.netWt);
+
+  merged.consignee = merged.consignee || trimIfPresent(order.client) || 'N/A';
+  merged.address = merged.address || trimIfPresent(order.location) || 'N/A';
+  merged.vehicle = merged.vehicle || 'N/A';
+  merged.transporter = merged.transporter || 'N/A';
+  merged.driverName = merged.driverName || 'N/A';
+  merged.loadStartTime = merged.loadStartTime || 'N/A';
+  merged.loadFinishTime = merged.loadFinishTime || 'N/A';
+  merged.loadingBy = merged.loadingBy || 'N/A';
+
+  if (String(merged.transporter || '').toUpperCase() === 'ABC') {
+    merged.tripKm = Number.isFinite(merged.tripKm) ? merged.tripKm : 0;
+    merged.hsd = Number.isFinite(merged.hsd) ? merged.hsd : 0;
+  }
+
+  return merged;
+};
+
 const getOrderById = async (id) => {
-  if (!ObjectId.isValid(id)) {
+  if (!id || !String(id).trim()) {
     throw httpError(400, 'Invalid order id.');
   }
 
-  const order = await collections().orders.findOne({ _id: new ObjectId(id) });
+  const order = await collections().orders.findOne({ _id: String(id) });
   if (!order) {
     throw httpError(404, 'Order not found.');
   }
@@ -54,7 +185,7 @@ const getOrderById = async (id) => {
   return order;
 };
 
-const appendEventAndAudit = async ({ orderId, event, audit }) => {
+const appendEventAndAudit = async ({ event, audit }) => {
   const c = collections();
   await Promise.all([
     c.orderEvents.insertOne(event),
@@ -72,7 +203,7 @@ const getPublicBaseUrl = (req) => {
 
 const normalizeOrderResponse = (req, doc) => normalizeOrderDoc(doc, { baseUrl: getPublicBaseUrl(req) });
 
-router.use(authenticateOrGuest);
+router.use('/orders', authenticateOrGuest);
 
 router.get('/orders', async (req, res, next) => {
   try {
@@ -116,10 +247,11 @@ router.post('/orders', requireRoles(ROLES.SALES, ROLES.MANAGEMENT), async (req, 
       createdBy: actor,
       invoice: null,
       dispatchSlip: null,
+      dispatchSlipFormat: null,
     };
 
     const result = await collections().orders.insertOne(order);
-    const orderId = result.insertedId.toString();
+    const orderId = String(result.insertedId);
 
     await appendEventAndAudit({
       orderId,
@@ -143,8 +275,9 @@ router.post('/orders', requireRoles(ROLES.SALES, ROLES.MANAGEMENT), async (req, 
 router.patch('/orders/:id', requireRoles(ROLES.SALES, ROLES.MANAGEMENT), async (req, res, next) => {
   try {
     const order = await getOrderById(req.params.id);
+    const isManagement = String(req.user?.role || '').toLowerCase() === ROLES.MANAGEMENT;
 
-    if (order.status === FINAL_STATUS) {
+    if (order.status === FINAL_STATUS && !isManagement) {
       throw httpError(400, 'Dispatched orders cannot be edited.');
     }
 
@@ -449,7 +582,37 @@ router.post('/orders/:id/dispatch', requireRoles(ROLES.LOADING, ROLES.MANAGEMENT
     const order = await getOrderById(req.params.id);
     validateTransition({ fromStatus: order.status, toStatus: ORDER_STATUSES.DISPATCHED, role: req.user.role });
 
-    const payload = validateDispatchPayload({ ...req.body });
+    const requestedSlipFormat = req.body?.slipFormat;
+    const slipFormat = resolveDispatchSlipFormat(requestedSlipFormat, 'pdf');
+
+    const dispatchPayload = { ...req.body };
+    delete dispatchPayload.slipFormat;
+
+    const payload = validateDispatchPayload(buildDispatchPayload(order, dispatchPayload));
+    const actor = actorFromReq(req);
+    const now = new Date().toISOString();
+
+    const slipFile = await generateDispatchSlip({
+      order: {
+        ...order,
+        ...payload,
+        id: order._id.toString(),
+      },
+      format: slipFormat,
+      uploadDir: config.uploadDir,
+    });
+
+    const docRecord = {
+      orderId: order._id.toString(),
+      type: 'dispatch_slip',
+      filename: slipFile.filename,
+      originalName: slipFile.filename,
+      path: slipFile.path,
+      mimeType: slipFile.mimeType,
+      size: slipFile.size,
+      uploadedBy: actor,
+      createdAt: now,
+    };
 
     await collections().orders.updateOne(
       { _id: order._id },
@@ -457,12 +620,15 @@ router.post('/orders/:id/dispatch', requireRoles(ROLES.LOADING, ROLES.MANAGEMENT
         $set: {
           status: ORDER_STATUSES.DISPATCHED,
           ...payload,
-          updatedAt: new Date().toISOString(),
+          dispatchSlip: slipFile.filename,
+          dispatchSlipFormat: slipFormat,
+          updatedAt: now,
         },
       },
     );
 
-    const actor = actorFromReq(req);
+    await collections().documents.insertOne(docRecord);
+
     await appendEventAndAudit({
       orderId: order._id.toString(),
       event: createOrderEvent({
@@ -471,12 +637,25 @@ router.post('/orders/:id/dispatch', requireRoles(ROLES.LOADING, ROLES.MANAGEMENT
         toStatus: ORDER_STATUSES.DISPATCHED,
         action: ORDER_ACTIONS.DISPATCH,
         actor,
+        metadata: { slipFormat },
       }),
-      audit: createAuditLog({ action: ORDER_ACTIONS.DISPATCH, actor, details: `Dispatched order ${order._id.toString()}` }),
+      audit: createAuditLog({
+        action: ORDER_ACTIONS.DISPATCH,
+        actor,
+        details: `Dispatched order ${order._id.toString()} and generated ${slipFormat.toUpperCase()} slip`,
+      }),
     });
 
     const updated = await collections().orders.findOne({ _id: order._id });
-    res.json({ order: normalizeOrderResponse(req, updated) });
+    const normalizedOrder = normalizeOrderResponse(req, updated);
+
+    res.json({
+      order: normalizedOrder,
+      document: {
+        ...docRecord,
+        url: normalizedOrder?.dispatchSlipUrl || null,
+      },
+    });
   } catch (error) {
     next(error);
   }

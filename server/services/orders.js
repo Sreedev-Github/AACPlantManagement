@@ -77,14 +77,19 @@ export const ensureRejectReason = (reason) => {
 
 export const normalizeOrderDoc = (doc, { baseUrl } = {}) => {
   if (!doc) return null;
+  const id = String(doc.id || doc._id || '');
   const normalized = {
     ...doc,
-    id: doc._id.toString(),
+    id,
     _id: undefined,
   };
 
   if (normalized.invoice) {
-    normalized.invoiceUrl = buildStoredFileUrl(baseUrl, 'invoices', normalized.id, normalized.invoice);
+    normalized.invoiceUrl = buildStoredFileUrl(baseUrl, 'invoices', id, normalized.invoice);
+  }
+
+  if (normalized.dispatchSlip) {
+    normalized.dispatchSlipUrl = buildStoredFileUrl(baseUrl, 'dispatch-slips', id, normalized.dispatchSlip);
   }
 
   return normalized;

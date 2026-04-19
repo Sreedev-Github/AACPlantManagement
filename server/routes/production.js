@@ -180,8 +180,8 @@ const writePdfHeader = (doc, title, date) => {
   doc.moveDown();
 };
 
-router.use(requireAuth);
-router.use(requireRoles(ROLES.PRODUCTION, ROLES.MANAGEMENT));
+router.use('/production', requireAuth);
+router.use('/production', requireRoles(ROLES.PRODUCTION, ROLES.MANAGEMENT));
 
 router.get('/production/raw/:date', async (req, res, next) => {
   try {

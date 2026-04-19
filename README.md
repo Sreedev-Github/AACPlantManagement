@@ -4,15 +4,14 @@ This project now runs as a full-stack app:
 
 - Frontend: React + Vite
 - Backend: Express API
-- Database: MongoDB Atlas
+- Database: MySQL (configured through `SQLSERVER_URL` env key)
 
 ## Environment Variables
 
-Create a `.env` file in the project root (already added in this workspace) with:
+Create `config/config.env` with:
 
 ```env
-MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-url>/?retryWrites=true&w=majority
-MONGODB_DB=aac_plant_management
+SQLSERVER_URL=mysql://username:password@hostname:3306/database_name?ssl=true
 PORT=4000
 VITE_API_BASE_URL=/api
 JWT_SECRET=change_this_to_a_long_random_string
@@ -20,6 +19,11 @@ JWT_EXPIRES_IN=8h
 ADMIN_SETUP_KEY=one_time_setup_key
 UPLOAD_DIR=server/uploads
 ```
+
+Notes:
+- `config/config.env` is now the primary editable backend config source.
+- The backend expects only `SQLSERVER_URL` for database connection details (despite the variable name, it now points to MySQL).
+- You can copy from `config/config.env.example` and then fill real values for deployment.
 
 ## Run In Development
 
@@ -66,7 +70,7 @@ with:
 }
 ```
 
-## What Is Persisted In MongoDB
+## What Is Persisted In The Database
 
 - Orders
 - Diesel entries
@@ -74,7 +78,7 @@ with:
 - Raw material stock
 - Finished stock
 
-Any publish/edit/status change done in the UI is now persisted to MongoDB through the backend API.
+Any publish/edit/status change done in the UI is now persisted to SQL Server through the backend API.
 
 ## New Backend Routes Added
 
@@ -106,26 +110,24 @@ Use runtime config instead:
 
 	`window.__AAC_CONFIG__ = { API_BASE_URL: 'https://your-backend-domain.com/api' };`
 
-4. Ensure your backend API is running separately (Node host/VPS/cPanel Node app) and CORS allows your frontend domain.
+4. Ensure your backend API is running separately on a Node-capable host and CORS allows your frontend domain.
 
 Notes:
 - If backend is on same domain/path, keep `API_BASE_URL` as `/api`.
 - Uploading only `dist` does not run Express backend by itself; login requires a live backend API.
 
-## Deploy Backend On Render (Blueprint)
+## Backend Requirement
 
-This repo includes `render.yaml` for backend API deployment.
+This app's auth, database access, and uploads require the Express backend runtime.
+If your cPanel plan has no Node.js runtime, deploy only the frontend (`dist`) there and host backend separately.
 
-1. Push this repository to GitHub.
-2. In Render, choose **New +** -> **Blueprint**.
-3. Connect the GitHub repo and select this project.
-4. Render will read `render.yaml` and create service `aac-plant-api`.
-5. In Render dashboard, open the service and set secret env values:
-	- `MONGODB_URI`
-	- `JWT_SECRET`
-	- `ADMIN_SETUP_KEY`
-6. Deploy and verify health URL: `/api/health`.
+Set these server env vars in your hosting provider:
 
-After backend is live, point frontend runtime config to Render API URL:
+- `SQLSERVER_URL`
+- `JWT_SECRET`
+- `ADMIN_SETUP_KEY`
+- `UPLOAD_DIR`
 
-`window.__AAC_CONFIG__ = { API_BASE_URL: 'https://<your-render-service>.onrender.com/api' };`
+After backend is live, point frontend runtime config to your API URL:
+
+`window.__AAC_CONFIG__ = { API_BASE_URL: 'https://<your-api-host>/api' };`

@@ -1,4 +1,0 @@
-DB user: sreedevdb_user
-DB user password: RvEmckIfzRXsBmPD
-
-Connection String: mongodb+srv://sreedevdb_user:RvEmckIfzRXsBmPD@cluster0.wg5pevj.mongodb.net/?appName=Cluster0

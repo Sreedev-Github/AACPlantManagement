@@ -136,10 +136,10 @@ export const DocPreviewModal = ({ fileType, fileName, fileUrl, onClose, onApprov
           <button onClick={onClose}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
         </div>
         <div className="flex-1 bg-slate-100 p-6 flex flex-col items-center justify-start min-h-[300px] overflow-y-auto gap-4">
-          {fileType === 'slip' && orderData ? (
-            <DispatchSlipContent order={orderData} />
-          ) : previewUrl ? (
+          {previewUrl ? (
             <iframe title={`Preview of ${fileName}`} src={previewUrl} className="w-full h-[65vh] rounded-lg border border-slate-200 bg-white shadow-md" />
+          ) : fileType === 'slip' && orderData ? (
+            <DispatchSlipContent order={orderData} />
           ) : (
             <div className="w-full h-[65vh] bg-white shadow-md border border-slate-200 rounded-lg flex items-center justify-center"><span className="text-sm text-slate-400 font-medium">Preview unavailable</span></div>
           )}
@@ -212,24 +212,65 @@ export const DispatchModal = ({ order, onClose, onSubmit, logs }) => {
       return `${displayHours}:${m} ${suffix}`;
     };
 
+    const consigneeValue = String(dForm.consignee || '').trim() || String(order.consignee || order.client || '').trim();
+    const addressValue = String(dForm.address || '').trim() || String(order.address || order.location || '').trim();
+    const vehicleValue = String(dForm.vehicle || '').trim();
+    const transporterValue = String(dForm.transporter || '').trim();
+    const driverNameValue = String(dForm.driverName || '').trim();
+    const loadingByValue = String(dForm.loadingBy || '').trim();
+    const driverContactValue = String(dForm.driverContact || '').trim();
+    const contactPersonValue = String(dForm.contactPerson || '').trim();
+    const unloadingByValue = String(dForm.unloadingBy || '').trim();
+
+    const missingTextFields = [
+      ['Consignee', consigneeValue],
+      ['Address', addressValue],
+      ['Vehicle Number', vehicleValue],
+      ['Transporter', transporterValue],
+      ['Driver Name', driverNameValue],
+      ['Loading By', loadingByValue],
+    ]
+      .filter(([, value]) => !value)
+      .map(([label]) => label);
+
+    if (missingTextFields.length > 0) {
+      window.alert(`${missingTextFields.join(', ')} are required before dispatch.`);
+      return;
+    }
+
+    const toNumber = (value, fallback = 0) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const parsedTruckType = parseInt(String(dForm.truckType || '').replace(/\D/gu, ''), 10);
+    const truckTypeValue = Number.isFinite(parsedTruckType)
+      ? parsedTruckType
+      : parseInt(String(order.truckType || order.vehicleType || '').replace(/\D/gu, ''), 10) || 0;
+
+    const cbmValue = toNumber(dForm.cbm, toNumber(order.cbm, 0));
+    const piecesLoadedValue = toNumber(dForm.piecesLoaded, toNumber(defaultPieces, 0));
+    const bjmValue = toNumber(dForm.bjm, toNumber(order.bjm, 0));
+    const bjmRateValue = toNumber(dForm.bjmRate, toNumber(order.bjmRate, 0));
+
     const finalData = {
-      consignee: dForm.consignee,
-      address: dForm.address,
-      contactPerson: dForm.contactPerson,
+      consignee: consigneeValue,
+      address: addressValue,
+      contactPerson: contactPersonValue,
       size: dForm.size,
-      cbm: Number(dForm.cbm),
-      piecesLoaded: Number(dForm.piecesLoaded),
-      bjm: Number(dForm.bjm),
-      bjmRate: Number(dForm.bjmRate),
-      vehicle: dForm.vehicle,
-      truckType: Number(dForm.truckType),
-      transporter: dForm.transporter,
-      driverName: dForm.driverName,
-      driverContact: dForm.driverContact,
+      cbm: cbmValue,
+      piecesLoaded: piecesLoadedValue,
+      bjm: bjmValue,
+      bjmRate: bjmRateValue,
+      vehicle: vehicleValue,
+      truckType: truckTypeValue,
+      transporter: transporterValue,
+      driverName: driverNameValue,
+      driverContact: driverContactValue,
       loadStartTime: timeTo12h(dForm.loadStartTime),
       loadFinishTime: timeTo12h(dForm.loadFinishTime),
-      loadingBy: dForm.loadingBy,
-      unloadingBy: isABC ? dForm.unloadingBy : null,
+      loadingBy: loadingByValue,
+      unloadingBy: isABC ? unloadingByValue : null,
       grossWeight: Number(dForm.grossWeight).toFixed(3),
       tareWeight: Number(dForm.tareWeight).toFixed(3),
       netWt: calculatedNetWt.toFixed(3),

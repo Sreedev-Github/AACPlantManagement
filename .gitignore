@@ -10,6 +10,19 @@ lerna-debug.log*
 .env.*
 !.env.example
 
+# Local server runtime config
+config/config.env
+!config/config.env.example
+
+# Generated uploads
+server/uploads/**
+
+# Local debug artifacts
+__status.txt
+__branch.txt
+__branches.txt
+__remote.txt
+
 node_modules
 dist
 dist-ssr
