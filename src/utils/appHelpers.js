@@ -40,8 +40,11 @@ export const formatDateTimeDisplay = (timestamp) => {
 export const formatDateDisplay = (dateString) => {
   if (!dateString) return '';
   const parts = dateString.split('-');
-  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
-  return date.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+  if (parts.length !== 3) return dateString;
+  // Input: yyyy-mm-dd
+  // Output: dd-mm-yyyy
+  const [yyyy, mm, dd] = parts;
+  return `${dd}-${mm}-${yyyy}`;
 };
 
 export const createTimestamp = () => ({ seconds: Math.floor(Date.now() / 1000) });
@@ -56,6 +59,18 @@ export const safeInt = (val) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+export const parseTruckTypeNumber = (value) => {
+  const digits = String(value ?? '').replace(/\D/gu, '');
+  if (!digits) return null;
+  const parsed = Number(digits);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const formatTruckTypeShort = (value) => {
+  const parsed = parseTruckTypeNumber(value);
+  return parsed ? `${parsed} W` : '';
+};
+
 export const convertTimeTo24h = (time12h) => {
   if (!time12h) return '';
   const [time, modifier] = time12h.split(' ');
@@ -68,10 +83,11 @@ export const convertTimeTo24h = (time12h) => {
 export const getVolumePerPieceFromSize = (size) => {
   const dims = String(size || '')
     .toLowerCase()
-    .split('x')
-    .map((part) => Number(part.trim()));
+    .match(/\d+(?:\.\d+)?/gu)
+    ?.slice(0, 3)
+    .map((part) => Number(part));
 
-  if (dims.length !== 3 || dims.some((value) => Number.isNaN(value) || value <= 0)) {
+  if (!dims || dims.length !== 3 || dims.some((value) => Number.isNaN(value) || value <= 0)) {
     return 0;
   }
 

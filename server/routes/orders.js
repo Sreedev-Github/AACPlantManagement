@@ -5,7 +5,8 @@ import { ORDER_STATUSES, ROLES } from '../constants.js';
 import { collections } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRoles } from '../middleware/roles.js';
-import { generateDispatchSlip, resolveDispatchSlipFormat } from '../services/dispatchSlip.js';
+import { generateDispatchSlip } from '../services/dispatchSlip.js';
+import { generateMtc } from '../services/mtc.js';
 import {
   FINAL_STATUS,
   ORDER_ACTIONS,
@@ -75,12 +76,68 @@ const parseTruckType = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const cleanText = (value) => String(value ?? '').trim();
+
+const parseRate = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const buildClientProfilesFromOrders = (docs, query = '') => {
+  const normalizedQuery = cleanText(query).toLowerCase();
+  const byClient = new Map();
+
+  docs.forEach((doc) => {
+    const clientName = cleanText(doc.client);
+    if (!clientName) return;
+
+    if (normalizedQuery && !clientName.toLowerCase().includes(normalizedQuery)) return;
+
+    const clientKey = clientName.toLowerCase();
+    if (!byClient.has(clientKey)) {
+      byClient.set(clientKey, {
+        clientName,
+        gstin: cleanText(doc.gstin),
+        sites: new Map(),
+      });
+    }
+
+    const profile = byClient.get(clientKey);
+    if (!profile.gstin) {
+      profile.gstin = cleanText(doc.gstin);
+    }
+
+    const siteName = cleanText(doc.location);
+    if (!siteName) return;
+
+    const siteKey = siteName.toLowerCase();
+    if (profile.sites.has(siteKey)) return;
+
+    profile.sites.set(siteKey, {
+      siteName,
+      aacRate: parseRate(doc.rate),
+      bjmRate: parseRate(doc.bjmRate),
+      lastUsedAt: String(doc.updatedAt || doc.createdAt || doc.orderDate || ''),
+    });
+  });
+
+  return Array.from(byClient.values())
+    .map((profile) => ({
+      clientName: profile.clientName,
+      gstin: profile.gstin,
+      sites: Array.from(profile.sites.values()).sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt)),
+    }))
+    .sort((a, b) => a.clientName.localeCompare(b.clientName));
+};
+
 const getSizeVolume = (size) => {
   const parts = String(size || '')
-    .split(/x/iu)
-    .map((item) => Number(item.trim()));
+    .toLowerCase()
+    .match(/\d+(?:\.\d+)?/gu)
+    ?.slice(0, 3)
+    .map((item) => Number(item));
 
-  if (parts.length !== 3 || parts.some((item) => !Number.isFinite(item) || item <= 0)) return null;
+  if (!parts || parts.length !== 3 || parts.some((item) => !Number.isFinite(item) || item <= 0)) return null;
 
   const [lengthMm, widthMm, heightMm] = parts;
   return (lengthMm / 1000) * (widthMm / 1000) * (heightMm / 1000);
@@ -102,6 +159,7 @@ const normalizeWeight = (value) => {
 
 const buildDispatchPayload = (order, payload) => {
   const merged = {
+    invoiceId: coalesceDispatchField(payload, order, 'invoiceId', ['invoiceNumber']),
     consignee: coalesceDispatchField(payload, order, 'consignee', ['client']),
     address: coalesceDispatchField(payload, order, 'address', ['location']),
     contactPerson: coalesceDispatchField(payload, order, 'contactPerson'),
@@ -124,8 +182,10 @@ const buildDispatchPayload = (order, payload) => {
     netWt: coalesceDispatchField(payload, order, 'netWt'),
     tripKm: coalesceDispatchField(payload, order, 'tripKm'),
     hsd: coalesceDispatchField(payload, order, 'hsd'),
+    purpose: coalesceDispatchField(payload, order, 'purpose'),
   };
 
+  merged.invoiceId = trimIfPresent(merged.invoiceId);
   merged.consignee = trimIfPresent(merged.consignee);
   merged.address = trimIfPresent(merged.address);
   merged.contactPerson = trimIfPresent(merged.contactPerson);
@@ -138,6 +198,7 @@ const buildDispatchPayload = (order, payload) => {
   merged.loadFinishTime = trimIfPresent(merged.loadFinishTime);
   merged.loadingBy = trimIfPresent(merged.loadingBy);
   merged.unloadingBy = trimIfPresent(merged.unloadingBy);
+  merged.purpose = trimIfPresent(merged.purpose);
 
   merged.cbm = parseNumberOrNull(merged.cbm) ?? 0;
   merged.bjm = parseNumberOrNull(merged.bjm) ?? 0;
@@ -213,6 +274,17 @@ router.get('/orders', async (req, res, next) => {
 
     const docs = await collections().orders.find(query).sort({ orderDate: -1, createdAt: -1 }).toArray();
     res.json({ orders: docs.map((doc) => normalizeOrderResponse(req, doc)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/orders/client-profiles', async (req, res, next) => {
+  try {
+    const query = cleanText(req.query.q || '');
+    const docs = await collections().orders.find({}).sort({ updatedAt: -1, createdAt: -1 }).limit(500).toArray();
+    const profiles = buildClientProfilesFromOrders(docs, query);
+    res.json({ profiles });
   } catch (error) {
     next(error);
   }
@@ -577,18 +649,115 @@ router.post('/orders/:id/reject', requireRoles(ROLES.SALES, ROLES.MANAGEMENT), a
   }
 });
 
+const handleGenerateMtc = async (req, res, next) => {
+  try {
+    const order = await getOrderById(req.params.id);
+
+    if (String(order.status || '') !== ORDER_STATUSES.DISPATCHED) {
+      throw httpError(400, 'MTC can be generated only after dispatch.');
+    }
+
+    const dryDensityResult = String(req.body?.dryDensityResult || '').trim();
+    const compressiveStrengthResult = String(req.body?.compressiveStrengthResult || '').trim();
+
+    if (!dryDensityResult || !compressiveStrengthResult) {
+      throw httpError(400, 'Dry Density Result and Compressive Strength Result are required.');
+    }
+
+    if (Number.isNaN(Number(dryDensityResult))) {
+      throw httpError(400, 'Dry Density Result must be a number.');
+    }
+
+    if (Number.isNaN(Number(compressiveStrengthResult))) {
+      throw httpError(400, 'Compressive Strength Result must be a number.');
+    }
+
+    const actor = actorFromReq(req);
+    const now = new Date().toISOString();
+
+    const mtcFile = await generateMtc({
+      order: {
+        ...order,
+        id: order._id,
+      },
+      testData: {
+        dryDensityResult,
+        compressiveStrengthResult,
+      },
+      uploadDir: config.uploadDir,
+    });
+
+    const docRecord = {
+      orderId: order._id.toString(),
+      type: 'mtc',
+      filename: mtcFile.filename,
+      originalName: mtcFile.filename,
+      path: mtcFile.path,
+      mimeType: mtcFile.mimeType,
+      size: mtcFile.size,
+      uploadedBy: actor,
+      createdAt: now,
+    };
+
+    await collections().orders.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          mtc: mtcFile.filename,
+          mtcFormat: 'pdf',
+          updatedAt: now,
+        },
+      },
+    );
+
+    await collections().documents.insertOne(docRecord);
+
+    await appendEventAndAudit({
+      orderId: order._id.toString(),
+      event: createOrderEvent({
+        orderId: order._id.toString(),
+        fromStatus: order.status,
+        toStatus: order.status,
+        action: ORDER_ACTIONS.DOCUMENT_UPLOAD,
+        actor,
+        metadata: { type: 'mtc' },
+      }),
+      audit: createAuditLog({
+        action: ORDER_ACTIONS.DOCUMENT_UPLOAD,
+        actor,
+        details: `Generated MTC for order ${order._id.toString()}`,
+      }),
+    });
+
+    const updated = await collections().orders.findOne({ _id: order._id });
+    const normalizedOrder = normalizeOrderResponse(req, updated);
+    res.json({
+      order: normalizedOrder,
+      document: {
+        ...docRecord,
+        url: normalizedOrder?.mtcUrl || null,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+router.post('/orders/:id/mtc', requireRoles(ROLES.ACCOUNTS, ROLES.MANAGEMENT), handleGenerateMtc);
+router.post('/orders/:id/documents/mtc', requireRoles(ROLES.ACCOUNTS, ROLES.MANAGEMENT), handleGenerateMtc);
+
 router.post('/orders/:id/dispatch', requireRoles(ROLES.LOADING, ROLES.MANAGEMENT), async (req, res, next) => {
   try {
     const order = await getOrderById(req.params.id);
     validateTransition({ fromStatus: order.status, toStatus: ORDER_STATUSES.DISPATCHED, role: req.user.role });
 
-    const requestedSlipFormat = req.body?.slipFormat;
-    const slipFormat = resolveDispatchSlipFormat(requestedSlipFormat, 'pdf');
+    const slipFormat = 'pdf';
 
     const dispatchPayload = { ...req.body };
     delete dispatchPayload.slipFormat;
 
     const payload = validateDispatchPayload(buildDispatchPayload(order, dispatchPayload));
+    payload.purpose = 'Sales';
     const actor = actorFromReq(req);
     const now = new Date().toISOString();
 

@@ -41,6 +41,7 @@ export const TRANSITION_PERMISSIONS = {
 };
 
 export const DISPATCH_REQUIRED_FIELDS = [
+  'invoiceId',
   'consignee',
   'address',
   'size',
@@ -81,3 +82,37 @@ export const createDefaultState = () => ({
   rawStock: {},
   finishedStock: {},
 });
+
+export const calculateFinancialYear = (date = null) => {
+  if (date === null) {
+    date = new Date();
+  } else if (typeof date === 'string') {
+    date = new Date(date);
+  }
+
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + 1;
+
+  let fyStart;
+  if (month < 4) {
+    fyStart = year - 1;
+  } else {
+    fyStart = year;
+  }
+
+  const fyEnd = fyStart + 1;
+  const fyStartStr = String(fyStart).slice(-2);
+  const fyEndStr = String(fyEnd).slice(-2);
+  
+  return `${fyStartStr} - ${fyEndStr}`;
+};
+
+export const formatInvoiceId = (invoiceNumber, date = null) => {
+  const invoiceNum = String(invoiceNumber || '').trim();
+  if (!invoiceNum) {
+    return '';
+  }
+
+  const fy = calculateFinancialYear(date);
+  return `ABC / ${fy} / ${invoiceNum}`;
+};

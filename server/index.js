@@ -19,7 +19,36 @@ dotenv.config();
 const app = express();
 const port = config.port;
 
-app.use(cors());
+const parseAllowedOrigins = () => {
+  const raw = process.env.CORS_ORIGIN || process.env.CORS_ORIGINS || '';
+  return String(raw)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+};
+
+const allowedOrigins = parseAllowedOrigins();
+
+if (config.nodeEnv === 'production' && allowedOrigins.length === 0) {
+  console.warn('CORS_ORIGIN is not set. API is currently allowing all origins.');
+}
+
+const corsOptions = allowedOrigins.length === 0
+  ? {}
+  : {
+      origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+          callback(null, true);
+          return;
+        }
+
+        const error = new Error('Origin not allowed by CORS');
+        error.statusCode = 403;
+        callback(error);
+      },
+    };
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use('/uploads', express.static(path.resolve(config.uploadDir)));
 

@@ -1,7 +1,7 @@
 import PDFDocument from 'pdfkit';
 import { Router } from 'express';
 
-import { ROLES } from '../constants.js';
+import { ROLES, STATE_DOC_ID } from '../constants.js';
 import { collections } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRoles } from '../middleware/roles.js';
@@ -36,6 +36,14 @@ const safeNum = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const formatDateDdMmYyyy = (isoDate) => {
+  if (!isoDate) return '';
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return '';
+  const [, yyyy, mm, dd] = match;
+  return `${dd}-${mm}-${yyyy}`;
+};
+
 const previousDate = (isoDate) => {
   const d = new Date(`${isoDate}T12:00:00Z`);
   if (Number.isNaN(d.getTime())) return null;
@@ -45,10 +53,183 @@ const previousDate = (isoDate) => {
 
 const getRawDay = async (date) => collections().rawStockDays.findOne({ date });
 const getFinishedDay = async (date) => collections().finishedStockDays.findOne({ date });
+const getLatestRawDayBefore = async (date) => {
+  if (!date) return null;
+  return collections().rawStockDays.findOne(
+    { date: { $lt: date } },
+    { sort: { date: -1 } },
+  );
+};
+
+const getLatestFinishedDayBefore = async (date) => {
+  if (!date) return null;
+  return collections().finishedStockDays.findOne(
+    { date: { $lt: date } },
+    { sort: { date: -1 } },
+  );
+};
+
+const sortStockDays = (days) => [...days].sort((left, right) => String(left.date).localeCompare(String(right.date)));
+
+const syncLegacyState = async (key, value) => {
+  await collections().appState.updateOne(
+    { _id: STATE_DOC_ID },
+    {
+      $setOnInsert: {
+        _id: STATE_DOC_ID,
+        orders: [],
+        dieselEntries: [],
+        logs: [],
+        rawStock: {},
+        finishedStock: {},
+      },
+      $set: {
+        [key]: value,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+    { upsert: true },
+  );
+};
+
+const rebuildRawItemsFromBaseline = (sourceItems, openingMap) => {
+  const sourceMap = new Map((Array.isArray(sourceItems) ? sourceItems : []).map((item) => [String(item?.desc || ''), item]));
+
+  return RAW_MATERIALS.map((item, idx) => {
+    const source = sourceMap.get(item.desc) || {};
+    const opening = safeNum(openingMap.get(item.desc));
+    const receipt = safeNum(source.receipt);
+    const issue = safeNum(source.issue);
+    const total = opening + receipt;
+    const closing = total - issue;
+
+    return {
+      id: idx,
+      desc: item.desc,
+      unit: item.unit,
+      opening,
+      receipt,
+      total,
+      issue,
+      closing,
+      remarks: String(source.remarks || ''),
+    };
+  });
+};
+
+const rebuildFinishedItemsFromBaseline = (sourceItems, openingMap) => {
+  const sourceMap = new Map((Array.isArray(sourceItems) ? sourceItems : []).map((item) => [String(item?.size || ''), item]));
+
+  return FINISHED_STOCK_SIZES.map((size, idx) => {
+    const source = sourceMap.get(size) || {};
+    const opening = safeNum(openingMap.get(size));
+    const segregation = safeNum(source.segregation);
+    const sale = safeNum(source.sale);
+    const proRejection = safeNum(source.proRejection);
+    const loadingRejection = safeNum(source.loadingRejection);
+    const selfUse = safeNum(source.selfUse);
+    const closing = (opening + segregation) - (sale + proRejection + loadingRejection + selfUse);
+
+    return {
+      id: idx,
+      size,
+      opening,
+      segregation,
+      sale,
+      proRejection,
+      loadingRejection,
+      selfUse,
+      closing,
+    };
+  });
+};
+
+const recalcRawStockChain = async (startDate, sourceItems) => {
+  const startBaseline = await getLatestRawDayBefore(startDate);
+  let openingMap = new Map((startBaseline?.items || []).map((item) => [item.desc, safeNum(item.closing)]));
+
+  const futureDays = sortStockDays(await collections().rawStockDays.find({ date: { $gte: startDate } }).toArray());
+  const recalculatedDays = [];
+
+  for (const day of futureDays) {
+    const items = rebuildRawItemsFromBaseline(day.date === startDate ? sourceItems : day.items, openingMap);
+    const updatedAt = new Date().toISOString();
+
+    await collections().rawStockDays.updateOne(
+      { date: day.date },
+      {
+        $set: {
+          date: day.date,
+          items,
+          updatedAt,
+          updatedBy: day.updatedBy || null,
+        },
+      },
+      { upsert: true },
+    );
+
+    recalculatedDays.push({ date: day.date, items, updatedAt });
+    openingMap = new Map(items.map((item) => [item.desc, safeNum(item.closing)]));
+  }
+
+  return recalculatedDays;
+};
+
+const recalcFinishedStockChain = async (startDate, sourcePayload) => {
+  const startBaseline = await getLatestFinishedDayBefore(startDate);
+  let openingMap = new Map((startBaseline?.items || []).map((item) => [item.size, safeNum(item.closing)]));
+  let mortarOpening = safeNum(startBaseline?.mortarBag?.closing);
+
+  const futureDays = sortStockDays(await collections().finishedStockDays.find({ date: { $gte: startDate } }).toArray());
+  const recalculatedDays = [];
+
+  for (const day of futureDays) {
+    const payload = day.date === startDate ? sourcePayload : day;
+    const items = rebuildFinishedItemsFromBaseline(payload.items, openingMap);
+    const sourceMortar = payload.mortarBag || {};
+    const mortarBag = {
+      opening: mortarOpening,
+      receipt: safeNum(sourceMortar.receipt),
+      sale: safeNum(sourceMortar.sale),
+      closing: mortarOpening + safeNum(sourceMortar.receipt) - safeNum(sourceMortar.sale),
+    };
+
+    const saleDaily = items.reduce((acc, item) => acc + safeNum(item.sale), 0);
+    const summary = {
+      ...(day.summary || {}),
+      saleDaily,
+    };
+
+    const updatedAt = new Date().toISOString();
+
+    await collections().finishedStockDays.updateOne(
+      { date: day.date },
+      {
+        $set: {
+          date: day.date,
+          items,
+          mortarBag,
+          summary,
+          updatedAt,
+          updatedBy: day.updatedBy || null,
+        },
+      },
+      { upsert: true },
+    );
+
+    recalculatedDays.push({ date: day.date, items, mortarBag, summary, updatedAt });
+    openingMap = new Map(items.map((item) => [item.size, safeNum(item.closing)]));
+    mortarOpening = safeNum(mortarBag.closing);
+  }
+
+  return recalculatedDays;
+};
 
 const buildDefaultRawItems = async (date) => {
-  const prev = await getRawDay(previousDate(date));
-  const prevMap = new Map((prev?.items || []).map((i) => [i.desc, safeNum(i.closing)]));
+  const prevDate = previousDate(date);
+  const prev = await getRawDay(prevDate);
+  const baseline = prev || await getLatestRawDayBefore(date);
+  const prevMap = new Map((baseline?.items || []).map((i) => [i.desc, safeNum(i.closing)]));
 
   return RAW_MATERIALS.map((item, idx) => {
     const opening = prevMap.get(item.desc) || 0;
@@ -86,10 +267,12 @@ const recomputeRawItems = (items) => items.map((item, idx) => {
 });
 
 const buildDefaultFinished = async (date) => {
-  const prev = await getFinishedDay(previousDate(date));
-  const prevItems = new Map((prev?.items || []).map((i) => [i.size, safeNum(i.closing)]));
-  const prevMortarClosing = safeNum(prev?.mortarBag?.closing);
-  const prevSummary = prev?.summary || {};
+  const prevDate = previousDate(date);
+  const prev = await getFinishedDay(prevDate);
+  const baseline = prev || await getLatestFinishedDayBefore(date);
+  const prevItems = new Map((baseline?.items || []).map((i) => [i.size, safeNum(i.closing)]));
+  const prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
+  const prevSummary = baseline?.summary || {};
 
   const items = FINISHED_STOCK_SIZES.map((size, idx) => {
     const opening = prevItems.get(size) || 0;
@@ -172,11 +355,12 @@ const recomputeFinished = (payload) => {
 };
 
 const writePdfHeader = (doc, title, date) => {
+  const formattedDate = formatDateDdMmYyyy(date);
   doc.fontSize(18).text('AAC Plant Management', { align: 'center' });
   doc.moveDown(0.4);
   doc.fontSize(13).text(title, { align: 'center' });
   doc.moveDown(0.2);
-  doc.fontSize(10).text(`Date: ${date}`, { align: 'center' });
+  doc.fontSize(10).text(`Date: ${formattedDate}`, { align: 'center' });
   doc.moveDown();
 };
 
@@ -215,7 +399,26 @@ router.put('/production/raw/:date', async (req, res, next) => {
       { upsert: true },
     );
 
-    return res.json({ ok: true, date, items });
+    const recalculatedDays = await recalcRawStockChain(date, items);
+    const appStateDoc = await collections().appState.findOne({ _id: STATE_DOC_ID });
+    const rawStockSnapshot = {
+      ...(appStateDoc?.rawStock || {}),
+      [date]: {
+        items,
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    for (const day of recalculatedDays) {
+      rawStockSnapshot[day.date] = {
+        items: day.items,
+        timestamp: day.updatedAt,
+      };
+    }
+
+    await syncLegacyState('rawStock', rawStockSnapshot);
+
+    return res.json({ ok: true, date, items, affectedDates: recalculatedDays });
   } catch (error) {
     return next(error);
   }
@@ -260,7 +463,30 @@ router.put('/production/finished/:date', async (req, res, next) => {
       { upsert: true },
     );
 
-    return res.json({ ok: true, date, ...payload });
+    const recalculatedDays = await recalcFinishedStockChain(date, payload);
+    const appStateDoc = await collections().appState.findOne({ _id: STATE_DOC_ID });
+    const finishedStockSnapshot = {
+      ...(appStateDoc?.finishedStock || {}),
+      [date]: {
+        items: payload.items,
+        mortarBag: payload.mortarBag,
+        summary: payload.summary,
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    for (const day of recalculatedDays) {
+      finishedStockSnapshot[day.date] = {
+        items: day.items,
+        mortarBag: day.mortarBag,
+        summary: day.summary,
+        timestamp: day.updatedAt,
+      };
+    }
+
+    await syncLegacyState('finishedStock', finishedStockSnapshot);
+
+    return res.json({ ok: true, date, ...payload, affectedDates: recalculatedDays });
   } catch (error) {
     return next(error);
   }
@@ -322,6 +548,8 @@ router.delete('/production/reset', requireRoles(ROLES.MANAGEMENT), async (_req, 
       collections().rawStockDays.deleteMany({}),
       collections().finishedStockDays.deleteMany({}),
     ]);
+    await syncLegacyState('rawStock', {});
+    await syncLegacyState('finishedStock', {});
     res.json({ ok: true });
   } catch (error) {
     next(error);

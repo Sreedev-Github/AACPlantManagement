@@ -8,7 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import { SIZES } from '../../constants/appConstants';
-import { calculatePiecesLoaded, convertTimeTo24h, createTimestamp } from '../../utils/appHelpers';
+import { calculatePiecesLoaded, convertTimeTo24h, createTimestamp, formatTruckTypeShort } from '../../utils/appHelpers';
 import { InputGroup } from '../ui/AppUI';
 
 const DispatchSlipContent = ({ order }) => (
@@ -16,7 +16,7 @@ const DispatchSlipContent = ({ order }) => (
     <h3 className="text-center text-lg font-bold mb-4 border-b pb-2">DISPATCH SLIP (SIMULATED)</h3>
     <p className="text-xs text-slate-500 mb-4">Order ID: {order.id}</p>
     <div className="space-y-2">
-      <div className="grid grid-cols-2"><span className="text-slate-600">Date:</span><span className="font-bold text-slate-800">{order.orderDate}</span></div>
+      <div className="grid grid-cols-2"><span className="text-slate-600">Date / Invoice ID:</span><span className="font-bold text-slate-800">{order.orderDate} / {order.invoiceId || order.invoiceNumber || '-'}</span></div>
       <div className="grid grid-cols-2"><span className="text-slate-600">Consignee:</span><span className="font-bold text-slate-800">{order.consignee || order.client}</span></div>
       <div className="grid grid-cols-2"><span className="text-slate-600">Address:</span><span className="text-slate-800 break-words text-xs">{order.address || order.location}</span></div>
       <div className="grid grid-cols-2"><span className="text-slate-600">Vehicle No:</span><span className="font-bold text-slate-800">{order.vehicle}</span></div>
@@ -158,6 +158,59 @@ export const DocPreviewModal = ({ fileType, fileName, fileUrl, onClose, onApprov
   );
 };
 
+export const MtcModal = ({ orderId, onClose, onGenerate }) => {
+  const [dryDensity, setDryDensity] = useState('');
+  const [compressiveStrength, setCompressiveStrength] = useState('');
+  const [status, setStatus] = useState('idle');
+
+  const handleGenerate = async () => {
+    if (status === 'processing') return;
+    const dd = String(dryDensity).trim();
+    const cs = String(compressiveStrength).trim();
+    if (dd === '' || cs === '') {
+      window.alert('Both Dry Density and Compressive Strength results are required.');
+      return;
+    }
+    if (isNaN(Number(dd)) || isNaN(Number(cs))) {
+      window.alert('Please enter numeric values.');
+      return;
+    }
+
+    setStatus('processing');
+    try {
+      await onGenerate(orderId, { dryDensityResult: dd, compressiveStrengthResult: cs });
+      setStatus('done');
+    } catch (e) {
+      console.error('MTC generation failed', e);
+      window.alert(e?.message || 'Failed to generate MTC');
+      setStatus('idle');
+      return;
+    }
+
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><FileText className="w-5 h-5" /> Generate MTC</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">Enter results to include in the MTC PDF.</p>
+          <InputGroup label="Dry Density Result"><input type="text" inputMode="decimal" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" value={dryDensity} onChange={(e) => setDryDensity(e.target.value)} placeholder="e.g. 620" /></InputGroup>
+          <InputGroup label="Compressive Strength Result"><input type="text" inputMode="decimal" className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" value={compressiveStrength} onChange={(e) => setCompressiveStrength(e.target.value)} placeholder="e.g. 4.8" /></InputGroup>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold">Cancel</button>
+          <button onClick={handleGenerate} disabled={status === 'processing'} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50">{status === 'processing' ? 'Generating...' : 'Generate MTC'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const DispatchModal = ({ order, onClose, onSubmit, logs }) => {
   const isABC = order.transporter && order.transporter.toUpperCase() === 'ABC';
   const loadingStartLog = logs.find((log) => log.details.includes(`Updated Order ${order.id} to Loading`));
@@ -174,6 +227,7 @@ export const DispatchModal = ({ order, onClose, onSubmit, logs }) => {
   const defaultPieces = order.piecesLoaded || calculatePiecesLoaded(order.cbm, order.size);
 
   const [dForm, setDForm] = useState({
+    invoiceId: order.invoiceId || order.invoiceNumber || '',
     consignee: order.consignee || order.client || '',
     address: order.address || order.location || '',
     contactPerson: order.contactPerson || '',
@@ -183,7 +237,7 @@ export const DispatchModal = ({ order, onClose, onSubmit, logs }) => {
     bjm: order.bjm || '',
     bjmRate: order.bjmRate || '',
     vehicle: order.vehicle || '',
-    truckType: order.truckType || '',
+    truckType: formatTruckTypeShort(order.truckType || order.vehicleType),
     transporter: order.transporter || '',
     driverName: order.driverName || '',
     driverContact: order.driverContact || '',
@@ -223,6 +277,7 @@ export const DispatchModal = ({ order, onClose, onSubmit, logs }) => {
     const unloadingByValue = String(dForm.unloadingBy || '').trim();
 
     const missingTextFields = [
+      ['Invoice ID', String(dForm.invoiceId || '').trim()],
       ['Consignee', consigneeValue],
       ['Address', addressValue],
       ['Vehicle Number', vehicleValue],
@@ -254,6 +309,7 @@ export const DispatchModal = ({ order, onClose, onSubmit, logs }) => {
     const bjmRateValue = toNumber(dForm.bjmRate, toNumber(order.bjmRate, 0));
 
     const finalData = {
+      invoiceId: String(dForm.invoiceId || '').trim(),
       consignee: consigneeValue,
       address: addressValue,
       contactPerson: contactPersonValue,
@@ -289,6 +345,7 @@ export const DispatchModal = ({ order, onClose, onSubmit, logs }) => {
           {isABC && <div className="p-3 bg-purple-50 rounded-lg border border-purple-100 mb-4"><p className="text-xs text-purple-700 font-bold flex items-center"><AlertTriangle className="w-3 h-3 mr-1" /> Transporter is ABC: Full HSD/KM log required.</p></div>}
           <h4 className="text-sm font-bold text-purple-700 border-b pb-1">SHIPMENT DETAILS</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <InputGroup label="Invoice ID"><input required type="text" className={getClassName(dForm.invoiceId)} value={dForm.invoiceId} onChange={(e) => setDForm({ ...dForm, invoiceId: e.target.value })} placeholder="e.g. INV-2026-001" /></InputGroup>
             <InputGroup label="Consignee (P)"><input required type="text" className={getClassName(dForm.consignee)} value={dForm.consignee} onChange={(e) => setDForm({ ...dForm, consignee: e.target.value })} placeholder={order.client} /></InputGroup>
             <InputGroup label="Address (P)"><input required type="text" className={getClassName(dForm.address)} value={dForm.address} onChange={(e) => setDForm({ ...dForm, address: e.target.value })} placeholder={order.location} /></InputGroup>
             <InputGroup label="Contact Person"><input type="text" className={getClassName(dForm.contactPerson)} value={dForm.contactPerson} onChange={(e) => setDForm({ ...dForm, contactPerson: e.target.value })} placeholder="e.g. 7008..." /></InputGroup>

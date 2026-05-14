@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ConfirmModal, DispatchModal, DocPreviewModal, ImportModal } from './components/modals/AppModals';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toPng, toCanvas } from 'html-to-image';
+import { PDFDocument } from 'pdf-lib';
+import { ConfirmModal, DispatchModal, DocPreviewModal, ImportModal, MtcModal } from './components/modals/AppModals';
 import {
   AppHeader,
   DailyLogView,
@@ -7,6 +9,7 @@ import {
   DieselRegisterView,
   HomeView,
   LoginView,
+  LoadingReportView,
   NewOrderView,
   ProductionDashboardView,
   SystemLogsView,
@@ -24,10 +27,12 @@ import {
   convertPiecesToCbm,
   createId,
   createTimestamp,
+  formatTruckTypeShort,
   formatDateDisplay,
   formatDateTimeDisplay,
   getPreviousDateString,
   getTodayString,
+  parseTruckTypeNumber,
   safeInt,
   safeNum,
 } from './utils/appHelpers';
@@ -36,18 +41,22 @@ import {
   createOrder,
   dispatchOrder,
   deleteOrder,
+  getAuthToken,
   getCurrentUser,
   loadInitialState,
   loadOrders,
   login,
   saveDieselEntries,
-  saveFinishedStock,
   saveLogs,
-  saveRawStock,
+  searchClientProfiles,
   transitionOrder,
   uploadInvoice,
   updateDispatchedOrder,
   updateOrder,
+  generateMtc,
+  updateRawStockDay,
+  updateFinishedStockDay,
+  resetProductionStock,
 } from './services/localStore';
 
 // Set to 'pdf' or 'jpg' to control generated dispatch slip output format.
@@ -71,17 +80,21 @@ export default function App() {
   const [productionTab, setProductionTab] = useState('raw-material');
   const [appMsg, setAppMsg] = useState(null);
   const [viewDate, setViewDate] = useState(getTodayString());
-  const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState('date');
 
   const [previewFile, setPreviewFile] = useState(null);
   const [dispatchModalOrderId, setDispatchModalOrderId] = useState(null);
+  const [mtcModalOrderId, setMtcModalOrderId] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [showImportModal, setShowImportModal] = useState(false);
 
   const [editingOrderId, setEditingOrderId] = useState(null);
+  const [clientProfiles, setClientProfiles] = useState([]);
+  const [clientSearchLoading, setClientSearchLoading] = useState(false);
+  const clientSearchRequestRef = useRef(0);
 
   const [formData, setFormData] = useState({
+    invoiceId: '',
     client: '',
     location: '',
     gstin: '',
@@ -104,6 +117,7 @@ export default function App() {
     date: getTodayString(),
     name: '',
     location: '',
+    purpose: '',
     driver: '',
     hsd: '',
   });
@@ -199,17 +213,25 @@ export default function App() {
     if (hydrated && canUseLegacyState(role)) saveLogs(logs);
   }, [logs, hydrated, role]);
 
-  useEffect(() => {
-    if (hydrated && canUseLegacyState(role)) saveRawStock(rawStock);
-  }, [rawStock, hydrated, role]);
-
-  useEffect(() => {
-    if (hydrated && canUseLegacyState(role)) saveFinishedStock(finishedStock);
-  }, [finishedStock, hydrated, role]);
-
   const showToast = (msg) => {
     setAppMsg(msg);
     setTimeout(() => setAppMsg(null), 3000);
+  };
+
+  const handleResetProductionStock = async () => {
+    if (!window.confirm('Clear all production stock data from the app and database?')) {
+      return;
+    }
+
+    try {
+      await resetProductionStock();
+      setRawStock({});
+      setFinishedStock({});
+      showToast('Production stock data cleared.');
+    } catch (error) {
+      console.error('Failed to reset production stock:', error);
+      showToast('Failed to clear production stock data.');
+    }
   };
 
   const patchOrderAndSync = async (orderId, updates) => {
@@ -238,7 +260,7 @@ export default function App() {
       id: createId(),
       action,
       details,
-      team: role.toUpperCase(),
+      team: String(role || 'unknown').toUpperCase(),
       user: user.uid,
       timestamp: createTimestamp(),
     };
@@ -250,268 +272,326 @@ export default function App() {
     const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
     date.setDate(date.getDate() + days);
     setViewDate(date.toISOString().split('T')[0]);
-    setSearchQuery('');
     setFilterMode('date');
   };
 
-  const handleDownloadReport = () => {
-    const csvEscape = (value) => {
-      const text = String(value ?? '');
-      if (!/[",\n]/.test(text)) return text;
-      return `"${text.replace(/"/g, '""')}"`;
-    };
+  const handleDownloadReport = async () => {
+    try {
+      showToast('Preparing PDF...');
 
-    let headers = [];
-    let rows = [];
-    let reportName = '';
+      const container = document.getElementById('report-container');
+      if (!container) throw new Error('Report container not found');
 
-    if (productionTab === 'raw-material') {
-      reportName = `RawMaterialStock_${viewDate}.csv`;
-      headers = ['Sr No', 'Description', 'Unit', 'Opening', 'Receipt', 'Total', 'Issue', 'Closing', 'Remarks'];
-      rows = getRawMaterialDataForDate(viewDate).map((item, idx) => [
-        idx + 1,
-        item.desc,
-        item.unit,
-        item.opening,
-        item.receipt,
-        item.total,
-        item.issue,
-        item.closing,
-        item.remarks || '',
-      ]);
-    } else {
-      reportName = `DailyProductionReport_${viewDate}.csv`;
-      const finishedData = getFinishedStockDataForDate(viewDate);
-      headers = ['SL No', 'Size', 'Opening', 'Segregation', 'Sale', 'Pro Rejection', 'Load Rejection', 'Self Use & Others', 'Closing'];
-      rows = finishedData.items.map((item, idx) => [
-        idx + 1,
-        item.size,
-        item.opening,
-        item.segregation,
-        item.sale,
-        item.proRejection,
-        item.loadingRejection,
-        item.selfUse,
-        item.closing,
-      ]);
+      // Create a high-resolution PNG of the report container
+      const dataUrl = await toPng(container, { backgroundColor: '#ffffff', pixelRatio: 2 });
+      const res = await fetch(dataUrl);
+      const imgBytes = await res.arrayBuffer();
 
-      rows.push([]);
-      rows.push(['Section', 'Metric', 'Value']);
-      rows.push(['Mortar Bag', 'Opening', finishedData.mortarBag.opening]);
-      rows.push(['Mortar Bag', 'Receipt', finishedData.mortarBag.receipt]);
-      rows.push(['Mortar Bag', 'Sale', finishedData.mortarBag.sale]);
-      rows.push(['Mortar Bag', 'Closing', finishedData.mortarBag.closing]);
-      rows.push([]);
-      rows.push(['Summary', 'Sale Daily', finishedData.summary.saleDaily]);
-      rows.push(['Summary', 'Production Daily', finishedData.summary.productionDaily]);
-      rows.push(['Summary', 'Total Sale', finishedData.summary.totalSale]);
-      rows.push(['Summary', 'Total Production', finishedData.summary.totalProduction]);
-      rows.push(['Summary', 'Total Mortar Sale', finishedData.summary.totalMortarSale]);
-    }
+      // Create a PDF with the image scaled to A4 width (points)
+      const pdfDoc = await PDFDocument.create();
+      const pngImage = await pdfDoc.embedPng(imgBytes);
 
-    const csvLines = [headers.map(csvEscape).join(',')];
-    rows.forEach((row) => csvLines.push(row.map(csvEscape).join(',')));
+      const A4_WIDTH = 595.28; // points
+      const pngDims = pngImage.scale(1);
+      const scale = A4_WIDTH / pngDims.width;
+      const imgWidth = pngDims.width * scale;
+      const imgHeight = pngDims.height * scale;
 
-    const blob = new Blob([`${csvLines.join('\n')}\n`], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = reportName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(link.href);
+      // Create a page sized to fit the full image (so vertical length is preserved)
+      const page = pdfDoc.addPage([A4_WIDTH, imgHeight]);
+      page.drawImage(pngImage, {
+        x: 0,
+        y: 0,
+        width: imgWidth,
+        height: imgHeight,
+      });
 
-    showToast('Report downloaded successfully.');
-  };
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Production_Report_${viewDate}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
 
-  const handleSearch = (e) => {
-    const val = e.target.value;
-    setSearchQuery(val);
-    if (val) {
-      setFilterMode('search');
-      if (view !== 'daily-log') setView('daily-log');
-    } else {
-      setFilterMode('date');
+      showToast('Report PDF ready.');
+    } catch (error) {
+      console.error('Failed to create report PDF:', error);
+      showToast('Failed to create PDF. Try again.');
     }
   };
 
-  const injectTestData = async () => {
-    showToast('Generating test data...');
-    const todayStr = getTodayString();
+  const requestClientProfiles = useCallback(async (query) => {
+    const trimmed = String(query || '').trim();
+    const requestId = clientSearchRequestRef.current + 1;
+    clientSearchRequestRef.current = requestId;
 
-    const testDiesel = {
-      id: createId(),
-      date: todayStr,
-      name: 'Generator 1',
-      location: 'Plant A',
-      driver: 'Operator Raj',
-      hsd: '50',
-      createdAt: createTimestamp(),
-    };
+    if (!trimmed) {
+      setClientProfiles([]);
+      setClientSearchLoading(false);
+      return [];
+    }
 
-    const testOrders = [
-      {
-        id: createId(),
-        client: 'Test Client A',
-        location: 'Site X',
-        vehicle: 'ABC-9999',
-        transporter: 'ABC',
-        size: SIZES[0],
-        cbm: 20,
-        bjm: 5,
-        rate: 4500,
-        bjmRate: 10,
-        status: 'Dispatched',
-        orderDate: todayStr,
-        createdBy: user.uid,
-        createdAt: createTimestamp(),
-        dispatchSlip: 'slip-a.jpg',
-        invoice: 'inv-a.pdf',
-        truckType: 12,
-        netWt: 25.0,
-        grossWeight: 35.0,
-        tareWeight: 10.0,
-        loadingBy: 'Team A',
-        unloadingBy: 'Team B',
-        hsd: 120,
-        driverName: 'Driver Singh',
-        tripKm: 450,
-        gsChecked: true,
-        loadingRate: 1900,
-        unloadingRate: 2200,
-      },
-      {
-        id: createId(),
-        client: 'Test Client B',
-        location: 'Site Y',
-        vehicle: 'MH-1000',
-        transporter: 'Logistix',
-        size: SIZES[2],
-        cbm: 15,
-        bjm: 3,
-        rate: 5000,
-        bjmRate: 8,
-        status: 'Loading Complete',
-        orderDate: todayStr,
-        createdBy: user.uid,
-        createdAt: createTimestamp(),
-        truckType: 10,
-        loadingRate: 1000,
-        gsChecked: false,
-      },
-      {
-        id: createId(),
-        client: 'Test Client C',
-        location: 'Site Z',
-        vehicle: 'DL-2000',
-        transporter: 'Freight Co',
-        size: SIZES[4],
-        cbm: 30,
-        bjm: 10,
-        rate: 4000,
-        bjmRate: 15,
-        status: 'Invoiced',
-        orderDate: todayStr,
-        createdBy: user.uid,
-        createdAt: createTimestamp(),
-        truckType: 14,
-        loadingRate: 1600,
-        gsChecked: false,
-        invoice: 'inv-c.pdf',
-      },
-      {
-        id: createId(),
-        client: 'Test Client D',
-        location: 'Site W',
-        vehicle: 'KA-3000',
-        transporter: 'ABC',
-        size: SIZES[6],
-        cbm: 22,
-        bjm: 7,
-        rate: 6000,
-        bjmRate: 12,
-        status: 'Awaiting Truck',
-        orderDate: todayStr,
-        createdBy: user.uid,
-        createdAt: createTimestamp(),
-        truckType: 6,
-        loadingRate: 800,
-        unloadingRate: 1000,
-        gsChecked: false,
-      },
-    ];
+    setClientSearchLoading(true);
 
     try {
-      const createdOrders = await Promise.all(testOrders.map(({ id, ...orderPayload }) => createOrder(orderPayload)));
-      setDieselEntries((prev) => [testDiesel, ...prev]);
-      setOrders((prev) => [...createdOrders, ...prev]);
-
-      logAction('TEST DATA', `Generated ${createdOrders.length} test orders and 1 diesel entry`);
-      showToast('Test Data Added.');
-    } catch (error) {
-      showToast(error.message || 'Failed to generate test data');
+      const profiles = await searchClientProfiles(trimmed);
+      if (requestId !== clientSearchRequestRef.current) return [];
+      setClientProfiles(Array.isArray(profiles) ? profiles : []);
+      return profiles;
+    } catch (_error) {
+      if (requestId === clientSearchRequestRef.current) {
+        setClientProfiles([]);
+      }
+      return [];
+    } finally {
+      if (requestId === clientSearchRequestRef.current) {
+        setClientSearchLoading(false);
+      }
     }
+  }, []);
+
+  // Helper: Find the most recent raw material data before a given date
+  const getLatestRawStockBefore = (date) => {
+    let checkDate = getPreviousDateString(date);
+    let maxIterations = 365; // Search up to 1 year back
+    while (maxIterations > 0) {
+      if (rawStock[checkDate]) {
+        return rawStock[checkDate];
+      }
+      checkDate = getPreviousDateString(checkDate);
+      maxIterations -= 1;
+    }
+    return null;
   };
 
   const getRawMaterialDataForDate = (date) => {
     if (rawStock[date]) return rawStock[date].items;
-    const prevDate = getPreviousDateString(date);
-    const prevData = rawStock[prevDate]?.items;
+    
+    // Search backwards for the most recent stock data
+    const baseline = getLatestRawStockBefore(date);
+    const prevMap = new Map((baseline?.items || []).map((i) => [i.desc, safeNum(i.closing)]));
+    
     return RAW_MATERIALS_LIST.map((item, index) => {
-      const prevClosing = prevData ? safeNum(prevData.find((d) => d.desc === item.desc)?.closing) || 0 : 0;
+      const opening = prevMap.get(item.desc) || 0;
       return {
         id: index,
         ...item,
-        opening: prevClosing,
+        opening,
         receipt: 0,
-        total: prevClosing,
+        total: opening,
         issue: 0,
-        closing: prevClosing,
+        closing: opening,
         remarks: '',
       };
     });
   };
 
+  // Helper: Find the most recent finished stock data before a given date
+  const getLatestFinishedStockBefore = (date) => {
+    let checkDate = getPreviousDateString(date);
+    let maxIterations = 365; // Search up to 1 year back
+    while (maxIterations > 0) {
+      if (finishedStock[checkDate]) {
+        return finishedStock[checkDate];
+      }
+      checkDate = getPreviousDateString(checkDate);
+      maxIterations -= 1;
+    }
+    return null;
+  };
+
   const getFinishedStockDataForDate = (date) => {
     let items = finishedStock[date]?.items;
-    const prevDate = getPreviousDateString(date);
-    const prevData = finishedStock[prevDate]?.items;
-    const prevMortar = finishedStock[prevDate]?.mortarBag;
-    const prevSummary = finishedStock[prevDate]?.summary || {};
-
+    
     if (!items) {
+      // Search backwards for the most recent stock data
+      const baseline = getLatestFinishedStockBefore(date);
+      const prevItems = new Map((baseline?.items || []).map((i) => [i.size, safeNum(i.closing)]));
+      const prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
+      const prevSummary = baseline?.summary || {};
+      
       items = FINISHED_STOCK_SIZES.map((size, index) => {
-        const prevClosing = prevData ? safeNum(prevData.find((d) => d.size === size)?.closing) || 0 : 0;
+        const opening = prevItems.get(size) || 0;
         return {
           id: index,
           size,
-          opening: prevClosing,
+          opening,
           segregation: 0,
           sale: 0,
           proRejection: 0,
           loadingRejection: 0,
           selfUse: 0,
-          closing: prevClosing,
+          closing: opening,
         };
       });
+    } else {
+      // If we already have data for this date, just use the items as-is
+      items = finishedStock[date].items;
     }
 
-    const mortarBag = finishedStock[date]?.mortarBag || {
-      opening: prevMortar ? safeNum(prevMortar.closing) : 0,
-      receipt: 0,
-      sale: 0,
-      closing: prevMortar ? safeNum(prevMortar.closing) : 0,
-    };
+    // For mortar bag, always search backwards if no data for this specific date
+    const mortarBag = finishedStock[date]?.mortarBag || (() => {
+      const baseline = getLatestFinishedStockBefore(date);
+      const prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
+      return {
+        opening: prevMortarClosing || 0,
+        receipt: 0,
+        sale: 0,
+        closing: prevMortarClosing || 0,
+      };
+    })();
 
-    const summary = finishedStock[date]?.summary || {
-      saleDaily: 0,
-      productionDaily: 0,
-      totalSale: prevSummary.totalSale ? safeNum(prevSummary.totalSale) : 0,
-      totalProduction: prevSummary.totalProduction ? safeNum(prevSummary.totalProduction) : 0,
-      totalMortarSale: 0,
-    };
+    // For summary, always search backwards if no data for this specific date
+    const summary = finishedStock[date]?.summary || (() => {
+      const baseline = getLatestFinishedStockBefore(date);
+      const prevSummary = baseline?.summary || {};
+      return {
+        saleDaily: 0,
+        productionDaily: 0,
+        totalSale: safeNum(prevSummary.totalSale) || 0,
+        totalProduction: safeNum(prevSummary.totalProduction) || 0,
+        totalMortarSale: 0,
+      };
+    })();
 
     return { items, mortarBag, summary };
+  };
+
+  const rebuildRawStockChain = (stock, startDate, sourceItems) => {
+    const nextStock = { ...stock };
+    const sourceMap = new Map((Array.isArray(sourceItems) ? sourceItems : []).map((item) => [String(item?.desc || ''), item]));
+    const dates = Object.keys(nextStock).filter((date) => date >= startDate).sort();
+    if (!dates.includes(startDate)) {
+      dates.unshift(startDate);
+    }
+
+    const baseline = (() => {
+      let checkDate = getPreviousDateString(startDate);
+      let iterations = 365;
+      while (iterations > 0) {
+        if (nextStock[checkDate]) return nextStock[checkDate];
+        checkDate = getPreviousDateString(checkDate);
+        iterations -= 1;
+      }
+      return null;
+    })();
+
+    let prevMap = new Map((baseline?.items || []).map((item) => [item.desc, safeNum(item.closing)]));
+
+    for (const date of dates) {
+      const sourceItemsForDate = date === startDate ? sourceItems : (nextStock[date]?.items || []);
+      const daySourceMap = date === startDate ? sourceMap : new Map((Array.isArray(sourceItemsForDate) ? sourceItemsForDate : []).map((item) => [String(item?.desc || ''), item]));
+
+      const rebuiltItems = RAW_MATERIALS_LIST.map((item, index) => {
+        const source = daySourceMap.get(item.desc) || {};
+        const opening = safeNum(prevMap.get(item.desc));
+        const receipt = safeNum(source.receipt);
+        const issue = safeNum(source.issue);
+        const total = opening + receipt;
+        const closing = total - issue;
+
+        return {
+          id: index,
+          desc: item.desc,
+          unit: item.unit,
+          opening,
+          receipt,
+          total,
+          issue,
+          closing,
+          remarks: String(source.remarks || ''),
+        };
+      });
+
+      nextStock[date] = {
+        ...(nextStock[date] || {}),
+        items: rebuiltItems,
+        timestamp: createTimestamp(),
+      };
+      prevMap = new Map(rebuiltItems.map((item) => [item.desc, safeNum(item.closing)]));
+    }
+
+    return nextStock;
+  };
+
+  const rebuildFinishedStockChain = (stock, startDate, sourcePayload) => {
+    const nextStock = { ...stock };
+    const dates = Object.keys(nextStock).filter((date) => date >= startDate).sort();
+    if (!dates.includes(startDate)) {
+      dates.unshift(startDate);
+    }
+
+    const baseline = (() => {
+      let checkDate = getPreviousDateString(startDate);
+      let iterations = 365;
+      while (iterations > 0) {
+        if (nextStock[checkDate]) return nextStock[checkDate];
+        checkDate = getPreviousDateString(checkDate);
+        iterations -= 1;
+      }
+      return null;
+    })();
+
+    let prevMap = new Map((baseline?.items || []).map((item) => [item.size, safeNum(item.closing)]));
+    let prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
+
+    for (const date of dates) {
+      const source = date === startDate ? sourcePayload : (nextStock[date] || {});
+      const sourceItemMap = new Map((Array.isArray(source.items) ? source.items : []).map((item) => [String(item?.size || ''), item]));
+
+      const rebuiltItems = FINISHED_STOCK_SIZES.map((size, index) => {
+        const itemSource = sourceItemMap.get(size) || {};
+        const opening = safeNum(prevMap.get(size));
+        const segregation = safeNum(itemSource.segregation);
+        const sale = safeNum(itemSource.sale);
+        const proRejection = safeNum(itemSource.proRejection);
+        const loadingRejection = safeNum(itemSource.loadingRejection);
+        const selfUse = safeNum(itemSource.selfUse);
+        const closing = (opening + segregation) - (sale + proRejection + loadingRejection + selfUse);
+
+        return {
+          id: index,
+          size,
+          opening,
+          segregation,
+          sale,
+          proRejection,
+          loadingRejection,
+          selfUse,
+          closing,
+        };
+      });
+
+      const sourceMortar = source.mortarBag || {};
+      const mortarBag = {
+        opening: prevMortarClosing,
+        receipt: safeNum(sourceMortar.receipt),
+        sale: safeNum(sourceMortar.sale),
+        closing: prevMortarClosing + safeNum(sourceMortar.receipt) - safeNum(sourceMortar.sale),
+      };
+
+      const summary = {
+        ...(source.summary || {}),
+        saleDaily: rebuiltItems.reduce((acc, item) => acc + safeNum(item.sale), 0),
+      };
+
+      nextStock[date] = {
+        ...(nextStock[date] || {}),
+        items: rebuiltItems,
+        mortarBag,
+        summary,
+        timestamp: createTimestamp(),
+      };
+
+      prevMap = new Map(rebuiltItems.map((item) => [item.size, safeNum(item.closing)]));
+      prevMortarClosing = safeNum(mortarBag.closing);
+    }
+
+    return nextStock;
   };
 
   const updateRawStock = (index, field, value) => {
@@ -530,13 +610,11 @@ export default function App() {
     newData[index].total = op + rec;
     newData[index].closing = newData[index].total - iss;
 
-    setRawStock((prev) => ({
-      ...prev,
-      [viewDate]: {
-        items: newData,
-        timestamp: createTimestamp(),
-      },
-    }));
+    setRawStock((prev) => rebuildRawStockChain(prev, viewDate, newData));
+
+    void updateRawStockDay(viewDate, newData).catch((error) => {
+      console.error('Failed to persist raw stock update:', error);
+    });
 
     logAction('STOCK UPDATE', `Updated ${newData[index].desc} stock for ${viewDate}`);
   };
@@ -562,15 +640,19 @@ export default function App() {
     const newSaleDaily = newData.reduce((acc, item) => acc + safeNum(item.sale), 0);
     const newSummary = { ...summary, saleDaily: newSaleDaily };
 
-    setFinishedStock((prev) => ({
-      ...prev,
-      [viewDate]: {
-        items: newData,
-        mortarBag,
-        summary: newSummary,
-        timestamp: createTimestamp(),
-      },
+    setFinishedStock((prev) => rebuildFinishedStockChain(prev, viewDate, {
+      items: newData,
+      mortarBag,
+      summary: newSummary,
     }));
+
+    void updateFinishedStockDay(viewDate, {
+      items: newData,
+      mortarBag,
+      summary: newSummary,
+    }).catch((error) => {
+      console.error('Failed to persist finished stock update:', error);
+    });
 
     logAction('STOCK UPDATE', `Updated ${newData[index].size} finished stock for ${viewDate}`);
   };
@@ -588,15 +670,19 @@ export default function App() {
     const sale = safeNum(newMortar.sale);
     newMortar.closing = op + rec - sale;
 
-    setFinishedStock((prev) => ({
-      ...prev,
-      [viewDate]: {
-        items,
-        mortarBag: newMortar,
-        summary,
-        timestamp: createTimestamp(),
-      },
+    setFinishedStock((prev) => rebuildFinishedStockChain(prev, viewDate, {
+      items,
+      mortarBag: newMortar,
+      summary,
     }));
+
+    void updateFinishedStockDay(viewDate, {
+      items,
+      mortarBag: newMortar,
+      summary,
+    }).catch((error) => {
+      console.error('Failed to persist mortar bag update:', error);
+    });
   };
 
   const updateProductionSummary = (field, value) => {
@@ -617,16 +703,25 @@ export default function App() {
         timestamp: createTimestamp(),
       },
     }));
+
+    void updateFinishedStockDay(viewDate, {
+      items,
+      mortarBag,
+      summary: newSummary,
+    }).catch((error) => {
+      console.error('Failed to persist production summary update:', error);
+    });
   };
 
   const handleEditOrder = (order) => {
     setEditingOrderId(order.id);
     setFormData({
+      invoiceId: order.invoiceId || order.invoiceNumber || '',
       client: order.client,
       location: order.location,
       gstin: order.gstin || '',
       vehicle: order.vehicle,
-      vehicleType: order.vehicleType || '',
+      vehicleType: formatTruckTypeShort(order.vehicleType || order.truckType),
       transporter: order.transporter || '',
       size: order.size,
       quantityUnit: order.quantityUnit || 'CBM',
@@ -699,11 +794,13 @@ export default function App() {
 
     const normalizedFormData = {
       ...formData,
+      invoiceId: String(formData.invoiceId || '').trim(),
       client: String(formData.client || '').trim(),
       location: String(formData.location || '').trim(),
       gstin: String(formData.gstin || '').trim(),
       vehicle: String(formData.vehicle || '').trim(),
-      vehicleType: String(formData.vehicleType || '').trim(),
+      vehicleType: formatTruckTypeShort(formData.vehicleType),
+      truckType: parseTruckTypeNumber(formData.vehicleType) || 0,
       transporter: String(formData.transporter || '').trim(),
       size: formData.size || SIZES[3],
       quantityUnit: primaryQuantityUnit,
@@ -740,8 +837,8 @@ export default function App() {
 
     setView('daily-log');
     setFilterMode('date');
-    setSearchQuery('');
     setFormData({
+      invoiceId: '',
       client: '',
       location: '',
       gstin: '',
@@ -764,16 +861,22 @@ export default function App() {
   const handleManualDieselSubmit = (e) => {
     e.preventDefault();
 
+    if (!String(manualDieselForm.purpose || '').trim()) {
+      showToast('Purpose is required for in-plant diesel entries.');
+      return;
+    }
+
     const newEntry = {
       id: createId(),
       ...manualDieselForm,
+      purpose: String(manualDieselForm.purpose || '').trim(),
       createdAt: createTimestamp(),
     };
 
     setDieselEntries((prev) => [newEntry, ...prev]);
     logAction('DIESEL ENTRY', `Added entry for ${manualDieselForm.name}`);
     showToast('In-Plant Entry Added');
-    setManualDieselForm({ date: getTodayString(), name: '', location: '', driver: '', hsd: '' });
+    setManualDieselForm({ date: getTodayString(), name: '', location: '', purpose: '', driver: '', hsd: '' });
   };
 
   const handleBulkImport = async (data) => {
@@ -837,12 +940,13 @@ export default function App() {
   };
 
   const updateTruckTypeAndRates = async (order, newTypeVal) => {
-    const tType = parseInt(String(newTypeVal).replace(/\D/g, ''), 10);
-    let updates = { truckType: newTypeVal };
+    const normalizedTruckType = formatTruckTypeShort(newTypeVal);
+    const tType = parseTruckTypeNumber(normalizedTruckType);
+    let updates = { truckType: normalizedTruckType };
     let newLoadRate = 0;
     let newUnloadRate = 0;
 
-    if (!Number.isNaN(tType) && tType > 0) {
+    if (tType && tType > 0) {
       const baseLoad = RATE_CARD.loading[tType] || 0;
       newLoadRate = baseLoad;
       if (order.gsChecked) {
@@ -949,6 +1053,8 @@ export default function App() {
     try {
       const updatedOrder = await dispatchOrder(orderId, {
         ...data,
+        invoiceId: String(data.invoiceId || '').trim(),
+        purpose: 'Sales',
         slipFormat: DISPATCH_SLIP_OUTPUT_FORMAT,
       });
 
@@ -984,6 +1090,7 @@ export default function App() {
         location: o.location,
         vehicle: o.vehicle,
         driver: o.driverName || '',
+        purpose: o.purpose || 'Sales',
         km: o.tripKm || '-',
         hsd: o.hsd,
         type: 'Sales',
@@ -997,6 +1104,7 @@ export default function App() {
       location: e.location,
       vehicle: e.vehicle || e.id || '',
       driver: e.driver,
+      purpose: e.purpose || '',
       km: e.km || '-',
       hsd: e.hsd,
       type: 'In-Plant',
@@ -1061,10 +1169,7 @@ export default function App() {
       });
 
   let displayedOrders = [];
-  if (filterMode === 'search') {
-    const lowerQ = searchQuery.toLowerCase();
-    displayedOrders = orders.filter((o) => (o.client || '').toLowerCase().includes(lowerQ) || (o.vehicle || '').toLowerCase().includes(lowerQ));
-  } else if (filterMode === 'date') {
+  if (filterMode === 'date') {
     displayedOrders = orders.filter((o) => o.orderDate === viewDate);
   } else if (filterMode === 'active') {
     displayedOrders = orders.filter((o) => ['Loading', 'Truck at Site', 'Loading Complete'].includes(o.status));
@@ -1078,7 +1183,6 @@ export default function App() {
   }
 
   const setViewAndFilter = (viewName, mode, date = null) => {
-    setSearchQuery('');
     setView(viewName);
     setFilterMode(mode);
     if (date) setViewDate(date);
@@ -1101,13 +1205,28 @@ export default function App() {
       {deleteConfirmId && (<ConfirmModal title="Delete Order?" message="This action cannot be undone. Are you sure?" onConfirm={confirmDeleteOrder} onCancel={() => setDeleteConfirmId(null)} />)}
       {showImportModal && (<ImportModal onClose={() => setShowImportModal(false)} onImport={handleBulkImport} />)}
       {dispatchOrderObj && (<DispatchModal order={dispatchOrderObj} onClose={() => setDispatchModalOrderId(null)} onSubmit={handleDispatchSubmit} logs={logs} />)}
+      {mtcModalOrderId && (
+        <MtcModal
+          orderId={mtcModalOrderId}
+          onClose={() => setMtcModalOrderId(null)}
+          onGenerate={async (orderId, testData) => {
+            try {
+              const updated = await generateMtc(orderId, testData);
+              setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
+              logAction('MTC GENERATED', `Generated MTC for Order ${orderId}`);
+              showToast('MTC generated and uploaded');
+            } catch (err) {
+              console.error('Generate MTC failed', err);
+              showToast(err?.message || 'Failed to generate MTC');
+              throw err;
+            }
+          }}
+        />
+      )}
 
       <AppHeader
         role={role}
         setViewAndFilter={setViewAndFilter}
-        searchQuery={searchQuery}
-        handleSearch={handleSearch}
-        injectTestData={injectTestData}
         view={view}
         filterMode={filterMode}
         viewDate={viewDate}
@@ -1131,6 +1250,7 @@ export default function App() {
             setViewDate={setViewDate}
             setEditingOrderId={setEditingOrderId}
             setFormData={setFormData}
+            setFilterMode={setFilterMode}
             SIZES={SIZES}
           />
         )}
@@ -1150,7 +1270,10 @@ export default function App() {
             updateFinishedStock={updateFinishedStock}
             updateMortarBag={updateMortarBag}
             updateProductionSummary={updateProductionSummary}
+            onResetStock={handleResetProductionStock}
             FINISHED_STOCK_SIZES={FINISHED_STOCK_SIZES}
+            canResetStock={role === 'management'}
+            readOnly={['sales', 'accounts'].includes(role)}
           />
         )}
 
@@ -1196,6 +1319,9 @@ export default function App() {
             handleSubmitOrder={handleSubmitOrder}
             formData={formData}
             setFormData={setFormData}
+            clientProfiles={clientProfiles}
+            clientSearchLoading={clientSearchLoading}
+            requestClientProfiles={requestClientProfiles}
             SIZES={SIZES}
           />
         )}
@@ -1205,7 +1331,6 @@ export default function App() {
             filterMode={filterMode}
             handleDateChange={handleDateChange}
             setViewAndFilter={setViewAndFilter}
-            searchQuery={searchQuery}
             viewDate={viewDate}
             formatDateDisplay={formatDateDisplay}
             getTodayString={getTodayString}
@@ -1217,6 +1342,7 @@ export default function App() {
             LOADING_STATUSES={LOADING_STATUSES}
             updateStatus={updateStatus}
             setDispatchModalOrderId={setDispatchModalOrderId}
+            setMtcModalOrderId={setMtcModalOrderId}
             handleFileUpload={handleFileUpload}
           />
         )}

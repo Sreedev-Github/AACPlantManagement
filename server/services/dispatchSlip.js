@@ -1,19 +1,23 @@
 import fs from 'fs';
 import path from 'path';
+import { spawnSync } from 'child_process';
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import sharp from 'sharp';
 
 import { httpError } from '../utils/httpError.js';
+import { formatInvoiceId } from '../constants.js';
 
 const ALLOWED_FORMATS = ['pdf', 'jpg'];
 const DISPATCH_SLIP_DIR = 'dispatch-slips';
+const PHP_DISPATCH_BRIDGE_PATH = path.resolve(process.cwd(), 'api', 'dispatch_pdf_cli.php');
 
-const TEMPLATE_PDF_PATH = path.resolve(process.cwd(), 'public', 'letter head.pdf');
+const TEMPLATE_PDF_PATH = path.resolve(process.cwd(), 'api', 'public', 'letter head.pdf');
 const TEMPLATE_JPG_PATH = path.resolve(process.cwd(), 'public', 'Screenshot 2026-04-19 173145.png');
+const MM_TO_PT = 72 / 25.4;
 
 const STANDARD_ROWS = [
-  ['DATE', 'date'],
+  ['DATE / INVOICE ID', 'dateInvoiceId'],
   ['CONSIGNEE', 'consignee'],
   ['ADDRESS', 'address'],
   ['VEHICLE NO. / TYPE', 'vehicleAndType'],
@@ -80,11 +84,16 @@ const formatSize = (size) => {
   return /MM$/iu.test(normalized) ? normalized.toUpperCase() : `${normalized.toUpperCase()} MM`;
 };
 
+const formatTruckType = (value) => {
+  const digits = String(value ?? '').replace(/\D/gu, '');
+  return digits ? `${digits} W` : '';
+};
+
 const buildSlipValues = (order) => ({
-  date: formatDate(order.orderDate),
+  dateInvoiceId: `${formatDate(order.orderDate)} / ${toUpperDisplay(formatInvoiceId(order.invoiceId || order.invoiceNumber, order.orderDate))}`,
   consignee: toUpperDisplay(order.consignee || order.client),
   address: toUpperDisplay(order.address || order.location),
-  vehicleAndType: toUpperDisplay(`${order.vehicle || '-'}${hasValue(order.truckType) ? ` / ${order.truckType}W` : ''}`),
+  vehicleAndType: toUpperDisplay(`${order.vehicle || '-'}${formatTruckType(order.truckType || order.vehicleType) ? ` / ${formatTruckType(order.truckType || order.vehicleType)}` : ''}`),
   driverName: toUpperDisplay(order.driverName),
   mobileNumber: toUpperDisplay(order.driverContact),
   transporterName: toUpperDisplay(order.transporter),
@@ -128,11 +137,46 @@ const resolveDispatchSlipLayout = (pageWidth, pageHeight) => {
     weightHeaderHeight,
     weightValueHeight,
     contactRowHeight,
-    signatureLineY: tableBottom + (unit * 1.6),
-    signatureTop: tableBottom + (unit * 2.0),
+    signatureLineY: tableBottom + (unit * 3.05),
+    signatureTop: tableBottom + (unit * 3.55),
     signatureLeft: tableLeft,
     signatureWidth: tableWidth,
   };
+};
+
+const resolveDispatchSlipTemplatePath = () => {
+  const candidates = [
+    TEMPLATE_PDF_PATH,
+    path.resolve(process.cwd(), 'public', 'letter head.pdf'),
+    path.resolve(process.cwd(), 'letter head.pdf'),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || TEMPLATE_PDF_PATH;
+};
+
+const mmToPt = (value) => value * MM_TO_PT;
+
+const renderDispatchSlipPdfViaPhp = async (order) => {
+  if (!fs.existsSync(PHP_DISPATCH_BRIDGE_PATH)) {
+    return null;
+  }
+
+  const phpBinary = process.env.PHP_BINARY || 'php';
+  const result = spawnSync(phpBinary, [PHP_DISPATCH_BRIDGE_PATH], {
+    input: JSON.stringify(order),
+    maxBuffer: 20 * 1024 * 1024,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const stderr = result.stderr ? result.stderr.toString('utf8').trim() : '';
+    throw new Error(stderr || `PHP dispatch bridge exited with status ${result.status}.`);
+  }
+
+  return Buffer.from(result.stdout);
 };
 
 const fitTextPdf = (font, text, fontSize, maxWidth) => {
@@ -160,6 +204,7 @@ const drawTextInCellPdf = ({
   height,
   align = 'left',
   padding = 8,
+  xOffset = 0,
 }) => {
   const fitted = fitTextPdf(font, text, size, Math.max(width - (padding * 2), 10));
   const textWidth = font.widthOfTextAtSize(fitted, size);
@@ -170,6 +215,7 @@ const drawTextInCellPdf = ({
   } else if (align === 'right') {
     drawX = x + width - padding - textWidth;
   }
+  drawX += xOffset;
 
   const drawY = page.getHeight() - y - ((height + size) / 2) + 2;
   page.drawText(fitted, {
@@ -190,74 +236,183 @@ const drawLinePdf = (page, x1, y1, x2, y2, thickness = 0.8) => {
   });
 };
 
+const getAlignedTextBoundsPdf = ({ font, text, size, x, width, align = 'left', padding = 0 }) => {
+  const fitted = fitTextPdf(font, text, size, Math.max(width - (padding * 2), 10));
+  const textWidth = font.widthOfTextAtSize(fitted, size);
+
+  let startX = x + padding;
+  if (align === 'center') {
+    startX = x + ((width - textWidth) / 2);
+  } else if (align === 'right') {
+    startX = x + width - padding - textWidth;
+  }
+
+  return { startX, endX: startX + textWidth };
+};
+
 const drawDispatchSlipBodyPdf = (page, fonts, values) => {
   const { regular, bold } = fonts;
-  const layout = resolveDispatchSlipLayout(page.getWidth(), page.getHeight());
-  const tableRight = layout.tableLeft + layout.tableWidth;
-  const dividerX = layout.tableLeft + layout.labelWidth;
+  const pageHeight = page.getHeight();
+  const tableLeft = 25.0;
+  const tableTop = 55.0;
+  const tableWidth = 160.0;
+  const labelWidth = 46.0;
+  const rowHeight = 10.0;
+  const weightHeight = 20.0;
+  const contactHeight = 10.0;
+  const valueWidth = tableWidth - labelWidth;
+  const tableRight = tableLeft + tableWidth;
+  const dividerX = tableLeft + labelWidth;
+  const valueThird = valueWidth / 3;
+  const tableBottom = tableTop + (STANDARD_ROWS.length * rowHeight) + weightHeight + contactHeight;
 
-  drawLinePdf(page, layout.tableLeft, layout.tableTop, tableRight, layout.tableTop);
-  drawLinePdf(page, layout.tableLeft, layout.tableBottom, tableRight, layout.tableBottom);
-  drawLinePdf(page, layout.tableLeft, layout.tableTop, layout.tableLeft, layout.tableBottom);
-  drawLinePdf(page, tableRight, layout.tableTop, tableRight, layout.tableBottom);
-  drawLinePdf(page, dividerX, layout.tableTop, dividerX, layout.tableBottom);
+  const drawLineMm = (x1, y1, x2, y2, thickness = 0.8) => {
+    page.drawLine({
+      start: { x: mmToPt(x1), y: pageHeight - mmToPt(y1) },
+      end: { x: mmToPt(x2), y: pageHeight - mmToPt(y2) },
+      thickness,
+      color: BLACK,
+    });
+  };
 
-  let cursorY = layout.tableTop;
+  const drawCellMm = ({
+    font,
+    text,
+    size,
+    x,
+    y,
+    width,
+    height,
+    align = 'left',
+    padding = 1.2,
+    border = 1,
+    xOffset = 0,
+  }) => {
+    const widthPt = mmToPt(width);
+    const heightPt = mmToPt(height);
+    const paddingPt = mmToPt(padding);
+    const fitted = fitTextPdf(font, text, size, Math.max(widthPt - (paddingPt * 2), 10));
+    const textWidth = font.widthOfTextAtSize(fitted, size);
+
+    let drawX = mmToPt(x) + paddingPt;
+    if (align === 'center') {
+      drawX = mmToPt(x) + ((widthPt - textWidth) / 2);
+    } else if (align === 'right') {
+      drawX = mmToPt(x) + widthPt - paddingPt - textWidth;
+    }
+    drawX += mmToPt(xOffset);
+
+    if (border > 0) {
+      page.drawRectangle({
+        x: mmToPt(x),
+        y: pageHeight - mmToPt(y) - heightPt,
+        width: widthPt,
+        height: heightPt,
+        borderWidth: 0.75,
+        borderColor: BLACK,
+      });
+    }
+
+    page.drawText(fitted, {
+      x: drawX,
+      y: pageHeight - mmToPt(y) - ((heightPt + size) / 2) + 2,
+      size,
+      font,
+      color: BLACK,
+    });
+  };
+
+  const drawTextMm = ({
+    font,
+    text,
+    size,
+    x,
+    y,
+    width,
+    align = 'left',
+    padding = 0,
+  }) => {
+    const widthPt = mmToPt(width);
+    const paddingPt = mmToPt(padding);
+    const fitted = fitTextPdf(font, text, size, Math.max(widthPt - (paddingPt * 2), 10));
+    const textWidth = font.widthOfTextAtSize(fitted, size);
+
+    let drawX = mmToPt(x) + paddingPt;
+    if (align === 'center') {
+      drawX = mmToPt(x) + ((widthPt - textWidth) / 2);
+    } else if (align === 'right') {
+      drawX = mmToPt(x) + widthPt - paddingPt - textWidth;
+    }
+
+    page.drawText(fitted, {
+      x: drawX,
+      y: pageHeight - mmToPt(y) - size,
+      size,
+      font,
+      color: BLACK,
+    });
+  };
+
+  drawLineMm(tableLeft, tableTop, tableRight, tableTop);
+  drawLineMm(tableLeft, tableBottom, tableRight, tableBottom);
+  drawLineMm(tableLeft, tableTop, tableLeft, tableBottom);
+  drawLineMm(tableRight, tableTop, tableRight, tableBottom);
+  drawLineMm(dividerX, tableTop, dividerX, tableBottom);
+
+  let cursorY = tableTop;
 
   for (const [label, key] of STANDARD_ROWS) {
     const rowTop = cursorY;
-    const rowHeight = layout.regularRowHeight;
     cursorY += rowHeight;
 
-    drawLinePdf(page, layout.tableLeft, cursorY, tableRight, cursorY);
-    drawTextInCellPdf({
-      page,
+    drawLineMm(tableLeft, cursorY, tableRight, cursorY);
+    drawCellMm({
       font: regular,
       text: label,
       size: 10,
-      x: layout.tableLeft,
+      x: tableLeft,
       y: rowTop,
-      width: layout.labelWidth,
+      width: labelWidth,
       height: rowHeight,
-      align: 'left',
+      align: key === 'dateInvoiceId' ? 'center' : 'left',
       padding: 7,
+      border: 0,
     });
-    drawTextInCellPdf({
-      page,
+    drawCellMm({
       font: bold,
       text: values[key],
       size: 10.5,
       x: dividerX,
       y: rowTop,
-      width: layout.valueWidth,
+      width: valueWidth,
       height: rowHeight,
       align: 'center',
       padding: 10,
+      border: 0,
     });
   }
 
   const weightTop = cursorY;
-  const weightBottom = weightTop + layout.weightHeaderHeight + layout.weightValueHeight;
-  const valueThird = layout.valueWidth / 3;
+  const weightBottom = weightTop + weightHeight;
 
-  drawLinePdf(page, dividerX + valueThird, weightTop, dividerX + valueThird, weightBottom);
-  drawLinePdf(page, dividerX + (valueThird * 2), weightTop, dividerX + (valueThird * 2), weightBottom);
-  drawLinePdf(page, dividerX, weightTop + layout.weightHeaderHeight, tableRight, weightTop + layout.weightHeaderHeight);
+  drawLineMm(dividerX + valueThird, weightTop, dividerX + valueThird, weightBottom);
+  drawLineMm(dividerX + (valueThird * 2), weightTop, dividerX + (valueThird * 2), weightBottom);
+  drawLineMm(dividerX, weightTop + 10.0, tableRight, weightTop + 10.0);
 
   cursorY = weightBottom;
-  drawLinePdf(page, layout.tableLeft, cursorY, tableRight, cursorY);
+  drawLineMm(tableLeft, cursorY, tableRight, cursorY);
 
-  drawTextInCellPdf({
-    page,
+  drawCellMm({
     font: regular,
     text: 'WEIGHTMENT DETAILS',
     size: 10,
-    x: layout.tableLeft,
+    x: tableLeft,
     y: weightTop,
-    width: layout.labelWidth,
-    height: layout.weightHeaderHeight + layout.weightValueHeight,
+    width: labelWidth,
+    height: weightHeight,
     align: 'left',
     padding: 7,
+    border: 0,
   });
 
   const weightHeaders = ['Gross Wt.', 'Tare Wt.', 'Net Wt.'];
@@ -266,83 +421,95 @@ const drawDispatchSlipBodyPdf = (page, fonts, values) => {
   for (let index = 0; index < weightHeaders.length; index += 1) {
     const colX = dividerX + (valueThird * index);
 
-    drawTextInCellPdf({
-      page,
+    drawCellMm({
       font: regular,
       text: weightHeaders[index],
       size: 10,
       x: colX,
       y: weightTop,
       width: valueThird,
-      height: layout.weightHeaderHeight,
+      height: 10.0,
       align: 'center',
       padding: 4,
+      border: 0,
     });
 
-    drawTextInCellPdf({
-      page,
+    drawCellMm({
       font: bold,
       text: weightValues[index],
       size: 10.5,
       x: colX,
-      y: weightTop + layout.weightHeaderHeight,
+      y: weightTop + 10.0,
       width: valueThird,
-      height: layout.weightValueHeight,
+      height: 10.0,
       align: 'center',
       padding: 4,
+      border: 0,
     });
   }
 
   const contactTop = cursorY;
-  cursorY += layout.contactRowHeight;
-  drawLinePdf(page, layout.tableLeft, cursorY, tableRight, cursorY);
+  cursorY += contactHeight;
+  drawLineMm(tableLeft, cursorY, tableRight, cursorY);
 
-  drawTextInCellPdf({
-    page,
+  drawCellMm({
     font: regular,
     text: 'CONTACT PERSON',
     size: 10,
-    x: layout.tableLeft,
+    x: tableLeft,
     y: contactTop,
-    width: layout.labelWidth,
-    height: layout.contactRowHeight,
+    width: labelWidth,
+    height: contactHeight,
     align: 'left',
     padding: 7,
+    border: 0,
   });
-  drawTextInCellPdf({
-    page,
+  drawCellMm({
     font: bold,
     text: values.contactPerson,
     size: 10.5,
     x: dividerX,
     y: contactTop,
-    width: layout.valueWidth,
-    height: layout.contactRowHeight,
+    width: valueWidth,
+    height: contactHeight,
     align: 'center',
     padding: 10,
+    border: 0,
   });
 
-  const signatureLabels = ['DRIVER SIGNATURE', 'LOADING SUPERVISOR', 'FOR ABC ASHPRO'];
-  const signatureWidth = layout.signatureWidth / 3;
+  drawLineMm(25.0, 235.0, 60.0, 235.0);
+  drawLineMm(85.0, 235.0, 125.0, 235.0);
+  drawLineMm(150.0, 235.0, 190.0, 235.0);
 
-  for (let index = 0; index < signatureLabels.length; index += 1) {
-    const segX = layout.signatureLeft + (signatureWidth * index);
-    drawLinePdf(page, segX, layout.signatureLineY, segX + signatureWidth, layout.signatureLineY);
-  }
-
-  signatureLabels.forEach((label, index) => {
-    drawTextInCellPdf({
-      page,
-      font: regular,
-      text: label,
-      size: 10,
-      x: layout.signatureLeft + (signatureWidth * index),
-      y: layout.signatureTop,
-      width: signatureWidth,
-      height: layout.regularRowHeight,
-      align: index === 0 ? 'left' : index === 2 ? 'right' : 'center',
-      padding: 0,
-    });
+  drawTextMm({
+    font: regular,
+    text: 'DRIVER SIGNATURE',
+    size: 10,
+    x: 25.0,
+    y: 237.0,
+    width: 35.0,
+    align: 'center',
+    padding: 0,
+  });
+  drawTextMm({
+    font: regular,
+    text: 'LOADING SUPERVISOR',
+    size: 10,
+    x: 85.0,
+    y: 237.0,
+    width: 40.0,
+    align: 'center',
+    padding: 0,
+  });
+  drawTextMm({
+    font: regular,
+    text: 'FOR ABC ASHPRO',
+    size: 10,
+    x: 150.0,
+    y: 237.0,
+    width: 40.0,
+    align: 'center',
+    padding: 0,
   });
 };
 
@@ -378,7 +545,7 @@ const buildDispatchSlipOverlaySvg = (width, height, values) => {
     lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${lineColor}" stroke-width="${strokeWidth}" />`);
   };
 
-  const drawText = ({ text, x, y, width: cellWidth, height: cellHeight, align = 'start', size = 10, weight = 400, padding = 7 }) => {
+  const drawText = ({ text, x, y, width: cellWidth, height: cellHeight, align = 'start', size = 10, weight = 400, padding = 7, xOffset = 0 }) => {
     const usableWidth = Math.max(cellWidth - (padding * 2), 12);
     const clipped = truncateSvgText(text, usableWidth, size);
     const anchor = align === 'center' ? 'middle' : align === 'end' ? 'end' : 'start';
@@ -389,9 +556,25 @@ const buildDispatchSlipOverlaySvg = (width, height, values) => {
     } else if (align === 'end') {
       tx = x + cellWidth - padding;
     }
+    tx += xOffset;
 
     const ty = y + (cellHeight / 2) + 0.5;
     texts.push(`<text x="${tx}" y="${ty}" fill="${lineColor}" font-family="Arial, Helvetica, sans-serif" font-size="${size}" font-weight="${weight}" dominant-baseline="middle" text-anchor="${anchor}">${xmlEscape(clipped)}</text>`);
+  };
+
+  const getAlignedTextBoundsSvg = ({ text, x, width: cellWidth, align = 'start', size = 10, padding = 0 }) => {
+    const usableWidth = Math.max(cellWidth - (padding * 2), 12);
+    const clipped = truncateSvgText(text, usableWidth, size);
+    const textWidth = Math.max(1, clipped.length * size * 0.56);
+
+    let startX = x + padding;
+    if (align === 'center') {
+      startX = x + ((cellWidth - textWidth) / 2);
+    } else if (align === 'end') {
+      startX = x + cellWidth - padding - textWidth;
+    }
+
+    return { startX, endX: startX + textWidth };
   };
 
   drawLine(layout.tableLeft, layout.tableTop, tableRight, layout.tableTop);
@@ -413,7 +596,7 @@ const buildDispatchSlipOverlaySvg = (width, height, values) => {
       y: rowTop,
       width: layout.labelWidth,
       height: layout.regularRowHeight,
-      align: 'start',
+      align: key === 'dateInvoiceId' ? 'center' : 'start',
       size: 10,
       weight: 500,
       padding: 7,
@@ -429,6 +612,7 @@ const buildDispatchSlipOverlaySvg = (width, height, values) => {
       size: 10.5,
       weight: 600,
       padding: 10,
+      xOffset: 0,
     });
   }
 
@@ -519,7 +703,16 @@ const buildDispatchSlipOverlaySvg = (width, height, values) => {
 
   for (let index = 0; index < signatureLabels.length; index += 1) {
     const segX = layout.signatureLeft + (signatureWidth * index);
-    drawLine(segX, layout.signatureLineY, segX + signatureWidth, layout.signatureLineY);
+    const align = index === 0 ? 'start' : index === 2 ? 'end' : 'center';
+    const bounds = getAlignedTextBoundsSvg({
+      text: signatureLabels[index],
+      x: segX,
+      width: signatureWidth,
+      align,
+      size: 10,
+      padding: 0,
+    });
+    drawLine(bounds.startX, layout.signatureLineY, bounds.endX, layout.signatureLineY);
   }
 
   signatureLabels.forEach((label, index) => {
@@ -551,9 +744,15 @@ const ensureTemplateExists = (templatePath, label) => {
 };
 
 const renderDispatchSlipPdf = async (order) => {
-  ensureTemplateExists(TEMPLATE_PDF_PATH, 'Dispatch slip PDF');
+  const phpBuffer = await renderDispatchSlipPdfViaPhp(order);
+  if (phpBuffer) {
+    return phpBuffer;
+  }
 
-  const templateBytes = await fs.promises.readFile(TEMPLATE_PDF_PATH);
+  const templatePath = resolveDispatchSlipTemplatePath();
+  ensureTemplateExists(templatePath, 'Dispatch slip PDF');
+
+  const templateBytes = await fs.promises.readFile(templatePath);
   const pdfDoc = await PDFDocument.load(templateBytes);
   const page = pdfDoc.getPage(0);
 

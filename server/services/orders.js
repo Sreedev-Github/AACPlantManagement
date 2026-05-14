@@ -80,6 +80,7 @@ export const normalizeOrderDoc = (doc, { baseUrl } = {}) => {
   const id = String(doc.id || doc._id || '');
   const normalized = {
     ...doc,
+    invoiceId: doc.invoiceId ?? doc.invoiceNumber ?? '',
     id,
     _id: undefined,
   };
@@ -90,6 +91,10 @@ export const normalizeOrderDoc = (doc, { baseUrl } = {}) => {
 
   if (normalized.dispatchSlip) {
     normalized.dispatchSlipUrl = buildStoredFileUrl(baseUrl, 'dispatch-slips', id, normalized.dispatchSlip);
+  }
+
+  if (normalized.mtc) {
+    normalized.mtcUrl = buildStoredFileUrl(baseUrl, 'mtc', id, normalized.mtc);
   }
 
   return normalized;

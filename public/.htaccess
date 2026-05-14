@@ -1,0 +1,16 @@
+RewriteEngine On
+
+# Never rewrite API requests.
+RewriteRule ^api/ - [L]
+
+# Serve real files and folders directly.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Do not rewrite static asset extension requests. Let Apache return 404 if missing.
+RewriteCond %{REQUEST_URI} \.(?:js|mjs|css|map|json|png|jpg|jpeg|gif|svg|webp|ico|pdf|html|txt)$ [NC]
+RewriteRule ^ - [L]
+
+# SPA fallback.
+RewriteRule ^ index.html [L]

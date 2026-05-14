@@ -1,22 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 export const StatusBadge = ({ status }) => {
-  let label = status.toUpperCase();
+  const normalizedStatus = String(status || 'Unknown');
+  let label = normalizedStatus.toUpperCase();
   let style = 'bg-gray-100 text-gray-800 border-gray-200';
 
-  if (status === 'Awaiting Truck') style = 'bg-yellow-50 text-yellow-700 border-yellow-200';
-  else if (status === 'Truck at Site') style = 'bg-orange-50 text-orange-700 border-orange-200';
-  else if (status === 'Loading') style = 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse';
-  else if (status === 'Loading Complete') {
+  if (normalizedStatus === 'Awaiting Truck') style = 'bg-yellow-50 text-yellow-700 border-yellow-200';
+  else if (normalizedStatus === 'Truck at Site') style = 'bg-orange-50 text-orange-700 border-orange-200';
+  else if (normalizedStatus === 'Loading') style = 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse';
+  else if (normalizedStatus === 'Loading Complete') {
     label = 'LOADING COMPLETE - Awaiting Bill';
     style = 'bg-red-50 text-red-700 border-red-200 font-bold';
-  } else if (status === 'Invoiced') {
+  } else if (normalizedStatus === 'Invoiced') {
     label = 'LOADING COMPLETE - Checking Bill';
     style = 'bg-indigo-50 text-indigo-700 border-indigo-200';
-  } else if (status === 'Approved') {
+  } else if (normalizedStatus === 'Approved') {
     label = 'LOADING COMPLETE - Invoice Received';
     style = 'bg-emerald-100 text-emerald-800 border-emerald-200 font-bold';
-  } else if (status === 'Dispatched') {
+  } else if (normalizedStatus === 'Dispatched') {
     label = 'DISPATCHED';
     style = 'bg-slate-800 text-white border-slate-800';
   }
@@ -49,7 +50,7 @@ export const InputGroup = ({ label, children }) => (
   </div>
 );
 
-export const EditableCell = ({ value, onUpdate, type = 'text', className = '', inputMode = 'text', tableId, rowIndex, colIndex }) => {
+export const EditableCell = ({ value, onUpdate, type = 'text', className = '', inputMode = 'text', tableId, rowIndex, colIndex, readOnly = false }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [localValue, setLocalValue] = useState(value || '');
   const inputRef = useRef(null);
@@ -78,7 +79,7 @@ export const EditableCell = ({ value, onUpdate, type = 'text', className = '', i
 
   const finishEditing = () => {
     setIsEditing(false);
-    if (localValue !== value) {
+    if (!readOnly && localValue !== value) {
       onUpdate(localValue);
     }
   };
@@ -108,6 +109,7 @@ export const EditableCell = ({ value, onUpdate, type = 'text', className = '', i
   };
 
   const handleKeyDownDiv = (e) => {
+    if (readOnly) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       setIsEditing(true);
@@ -137,9 +139,9 @@ export const EditableCell = ({ value, onUpdate, type = 'text', className = '', i
       ref={cellRef}
       tabIndex={0}
       data-cell={`${tableId}-${rowIndex}-${colIndex}`}
-      onClick={() => setIsEditing(true)}
+      onClick={() => { if (!readOnly) setIsEditing(true); }}
       onKeyDown={handleKeyDownDiv}
-      className={`w-full h-full px-1 py-3 cursor-text hover:bg-blue-50 focus:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-300 rounded transition-colors font-bold text-sm text-slate-700 leading-relaxed ${className} flex items-center justify-end`}
+      className={`w-full h-full px-1 py-3 ${readOnly ? 'cursor-default' : 'cursor-text hover:bg-blue-50 focus:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-300'} rounded transition-colors font-bold text-sm text-slate-700 leading-relaxed ${className} flex items-center justify-end`}
     >
       {value || (value === 0 ? '0' : '')}
     </div>
