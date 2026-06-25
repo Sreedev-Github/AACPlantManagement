@@ -1,14 +1,23 @@
-export const STATE_DOC_ID = 'aac_plant_state';
+export const STATE_DOC_ID = 'main';
 
 export const STATE_KEYS = ['orders', 'dieselEntries', 'logs', 'rawStock', 'finishedStock'];
 
 export const ROLES = {
-  SALES: 'sales',
+  SALES: 'sale',
   LOADING: 'loading',
-  ACCOUNTS: 'accounts',
+  ACCOUNTS: 'account',
   MANAGEMENT: 'management',
   PRODUCTION: 'production',
 };
+
+export const ROLE_ALIASES = {
+  sales: ROLES.SALES,
+  sale: ROLES.SALES,
+  accounts: ROLES.ACCOUNTS,
+  account: ROLES.ACCOUNTS,
+};
+
+export const normalizeRole = (role) => ROLE_ALIASES[String(role || '').toLowerCase()] || String(role || '').toLowerCase();
 
 export const ORDER_STATUSES = {
   AWAITING_TRUCK: 'Awaiting Truck',
@@ -64,8 +73,8 @@ export const DISPATCH_REQUIRED_FIELDS = [
 export const ABC_DISPATCH_REQUIRED_FIELDS = ['tripKm', 'hsd'];
 
 export const COLLECTIONS = {
-  USERS: 'users',
-  ORDERS: 'orders',
+  USERS: 'app_users',
+  ORDERS: 'app_orders',
   ORDER_EVENTS: 'order_events',
   DOCUMENTS: 'documents',
   DIESEL: 'diesel_entries',

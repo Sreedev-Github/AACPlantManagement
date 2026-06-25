@@ -75,15 +75,21 @@ export const generateMtc = async ({ order, testData, uploadDir }) => {
 
   // Calculate MTC dates:
   // Issue Date = Today
-  // Testing Date = Issue Date - 10 days
-  const issueDateIso = getTodayIso();
-  const testingDateIso = subtractDaysIso(issueDateIso, 10);
+  // Use provided dates if present, otherwise default to today and today-10
+  const providedIssueDate = String(testData?.issueDate || '').trim();
+  const providedTestingDate = String(testData?.testingDate || '').trim();
 
-  // Format dates as dd-mm-yyyy
+  const issueDateIso = providedIssueDate ? null : getTodayIso();
+  const computedIssueDate = providedIssueDate || formatDateDdMmYyyy(issueDateIso);
+
+  const testingDateIso = providedTestingDate ? null : subtractDaysIso(getTodayIso(), 10);
+  const computedTestingDate = providedTestingDate || formatDateDdMmYyyy(testingDateIso);
+
+  // Ensure we forward requirement fields if present
   const testDataWithDates = {
     ...testData,
-    issueDate: formatDateDdMmYyyy(issueDateIso),
-    testingDate: formatDateDdMmYyyy(testingDateIso),
+    issueDate: computedIssueDate,
+    testingDate: computedTestingDate,
   };
 
   const targetDir = path.join(uploadDir, MTC_DIR, orderId);

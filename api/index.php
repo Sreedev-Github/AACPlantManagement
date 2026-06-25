@@ -8,7 +8,7 @@ if (function_exists('ini_set')) {
 }
 error_reporting(E_ALL);
 ob_start();
-
+ 
 set_error_handler(static function ($severity, $message, $file, $line) {
     if (!(error_reporting() & $severity)) {
         return false;
@@ -27,10 +27,11 @@ set_exception_handler(static function ($e) {
     }
     header('Content-Type: application/json; charset=utf-8');
     http_response_code(500);
-    echo json_encode([
-        'message' => 'Unhandled server error.',
-        'details' => $e instanceof Throwable ? $e->getMessage() : 'Unknown error',
-    ], JSON_UNESCAPED_SLASHES);
+    $payload = ['message' => 'Unhandled server error.'];
+    if (($GLOBALS['cfg']['debug'] ?? false) && $e instanceof Throwable) {
+        $payload['details'] = $e->getMessage();
+    }
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES);
     exit;
 });
 
@@ -43,10 +44,11 @@ try {
     }
     header('Content-Type: application/json; charset=utf-8');
     http_response_code(500);
-    echo json_encode([
-        'message' => 'Server configuration error.',
-        'details' => $e->getMessage(),
-    ], JSON_UNESCAPED_SLASHES);
+    $payload = ['message' => 'Server configuration error.'];
+    if (($cfg['debug'] ?? false) === true) {
+        $payload['details'] = $e->getMessage();
+    }
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES);
     exit;
 }
 
@@ -173,7 +175,7 @@ function auth_user_or_null(string $jwtSecret): ?array
     return [
         'id' => (string) ($payload['sub'] ?? ''),
         'username' => (string) ($payload['username'] ?? ''),
-        'role' => (string) ($payload['role'] ?? ''),
+        'role' => normalize_role((string) ($payload['role'] ?? '')),
     ];
 }
 
@@ -189,14 +191,105 @@ function require_auth(string $jwtSecret): array
 
 function require_roles(array $user, array $allowedRoles): void
 {
-    $role = strtolower((string) ($user['role'] ?? ''));
+    $role = normalize_role((string) ($user['role'] ?? ''));
     $allowed = array_map(static function ($item) {
-        return strtolower((string) $item);
+        return normalize_role((string) $item);
     }, $allowedRoles);
 
     if (!in_array($role, $allowed, true)) {
         json_error('Forbidden.', 403);
     }
+}
+
+function normalize_role(string $role): string
+{
+    $normalized = strtolower(trim($role));
+
+    return match ($normalized) {
+        'sales', 'sale' => 'sale',
+        'accounts', 'account' => 'account',
+        default => $normalized,
+    };
+}
+
+function default_team_users(): array
+{
+    return [
+        ['username' => 'sale', 'role' => 'sale'],
+        ['username' => 'site', 'role' => 'loading'],
+        ['username' => 'account', 'role' => 'account'],
+        ['username' => 'management', 'role' => 'management'],
+        ['username' => 'production', 'role' => 'production'],
+    ];
+}
+
+function legacy_team_users(): array
+{
+    return ['sales1', 'loading1', 'accounts1', 'manager1', 'prod1'];
+}
+
+function temporary_team_user_like_patterns(): array
+{
+    return ['smoke_loading_%', 'diag_loading_%', 'debug_loading_%'];
+}
+
+function serialize_user_row(array $row): array
+{
+    return [
+        'id' => (string) ($row['id'] ?? ''),
+        'username' => (string) ($row['username'] ?? ''),
+        'role' => normalize_role((string) ($row['role'] ?? '')),
+    ];
+}
+
+function seed_default_team_users(PDO $pdo): void
+{
+    $users = default_team_users();
+    $legacyUsers = legacy_team_users();
+
+    $siteCheck = $pdo->prepare('SELECT id FROM app_users WHERE username = ? LIMIT 1');
+    $siteCheck->execute(['site']);
+    if ($siteCheck->fetch()) {
+        $pdo->prepare('DELETE FROM app_users WHERE username = ?')->execute(['loading']);
+    } else {
+        $pdo->prepare('UPDATE app_users SET username = ? WHERE username = ?')->execute(['site', 'loading']);
+    }
+
+    foreach ($users as $index => $seed) {
+        $select = $pdo->prepare('SELECT id, username, role FROM app_users WHERE username = ? LIMIT 1');
+        $select->execute([$seed['username']]);
+        $existing = $select->fetch();
+        if (is_array($existing)) {
+            continue;
+        }
+
+        $legacyUsername = $legacyUsers[$index] ?? null;
+        $legacy = null;
+        if ($legacyUsername !== null) {
+            $legacyStmt = $pdo->prepare('SELECT id, username, role FROM app_users WHERE username = ? LIMIT 1');
+            $legacyStmt->execute([$legacyUsername]);
+            $legacy = $legacyStmt->fetch();
+        }
+
+        $passwordHash = password_hash('ashpro@123', PASSWORD_BCRYPT);
+
+        if (is_array($legacy)) {
+            $update = $pdo->prepare('UPDATE app_users SET username = ?, password_hash = ?, role = ? WHERE id = ?');
+            $update->execute([$seed['username'], $passwordHash, $seed['role'], $legacy['id']]);
+            continue;
+        }
+
+        $insert = $pdo->prepare('INSERT INTO app_users (username, password_hash, role) VALUES (?, ?, ?)');
+        $insert->execute([$seed['username'], $passwordHash, $seed['role']]);
+    }
+
+    $deleteLegacy = $pdo->prepare('DELETE FROM app_users WHERE username = ?');
+    foreach ($legacyUsers as $legacyUsername) {
+        $deleteLegacy->execute([$legacyUsername]);
+    }
+
+    $deleteTemporary = $pdo->prepare('DELETE FROM app_users WHERE username LIKE ? OR username LIKE ? OR username LIKE ?');
+    $deleteTemporary->execute(temporary_team_user_like_patterns());
 }
 
 function format_date_dd_mm_yyyy(string $isoDate): string
@@ -247,18 +340,11 @@ function ensure_schema(PDO $pdo): void
 
     $count = (int) $pdo->query('SELECT COUNT(*) AS c FROM app_users')->fetch()['c'];
     if ($count === 0) {
-        $seed = [
-            ['sales1', 'sales123', 'sales'],
-            ['loading1', 'load1234', 'loading'],
-            ['accounts1', 'acc12345', 'accounts'],
-            ['manager1', 'manage123', 'management'],
-            ['prod1', 'prod1234', 'production'],
-        ];
+        seed_default_team_users($pdo);
+    }
 
-        $stmt = $pdo->prepare('INSERT INTO app_users (username, password_hash, role) VALUES (?, ?, ?)');
-        foreach ($seed as $row) {
-            $stmt->execute([$row[0], password_hash($row[1], PASSWORD_BCRYPT), $row[2]]);
-        }
+    if ($count > 0) {
+        seed_default_team_users($pdo);
     }
 
     $exists = $pdo->prepare('SELECT id FROM app_state WHERE id = ?');
@@ -477,6 +563,7 @@ function raw_materials_catalog(): array
         ['desc' => 'SOLUBLE OIL', 'unit' => 'Ltr'],
         ['desc' => 'MOULD OIL', 'unit' => 'Ltr'],
         ['desc' => 'HARDENER', 'unit' => 'KG'],
+        ['desc' => 'SODIUM DICHROMATE', 'unit' => 'KG'],
         ['desc' => 'CHARCOAL', 'unit' => 'KG'],
         ['desc' => 'SALT', 'unit' => 'KG'],
         ['desc' => 'COAL', 'unit' => 'Ton'],
@@ -557,9 +644,30 @@ function recompute_raw_items_with_opening(array $sourceItems, array $openingMap)
         $sourceMap[$desc] = $source;
     }
 
-    $result = [];
-    foreach (raw_materials_catalog() as $idx => $catalog) {
+    $allDescs = [];
+    $catalogMap = [];
+    foreach (raw_materials_catalog() as $catalog) {
         $desc = (string) $catalog['desc'];
+        $allDescs[] = $desc;
+        $catalogMap[$desc] = $catalog['unit'];
+    }
+
+    foreach (array_keys($sourceMap) as $desc) {
+        if (!in_array($desc, $allDescs, true)) {
+            $allDescs[] = $desc;
+            $catalogMap[$desc] = $sourceMap[$desc]['unit'] ?? 'Unit';
+        }
+    }
+    foreach (array_keys($openingMap) as $desc) {
+        if (!in_array($desc, $allDescs, true)) {
+            $allDescs[] = $desc;
+            $catalogMap[$desc] = 'Unit'; // Fallback
+        }
+    }
+
+    $result = [];
+    $idx = 0;
+    foreach ($allDescs as $desc) {
         $src = isset($sourceMap[$desc]) && is_array($sourceMap[$desc]) ? $sourceMap[$desc] : [];
 
         $opening = safe_num($openingMap[$desc] ?? 0);
@@ -569,9 +677,9 @@ function recompute_raw_items_with_opening(array $sourceItems, array $openingMap)
         $closing = $total - $issue;
 
         $result[] = [
-            'id' => $idx,
+            'id' => $idx++,
             'desc' => $desc,
-            'unit' => (string) $catalog['unit'],
+            'unit' => (string) ($catalogMap[$desc] ?? 'Unit'),
             'opening' => $opening,
             'receipt' => $receipt,
             'total' => $total,
@@ -631,8 +739,22 @@ function recompute_finished_items_with_opening(array $sourceItems, array $openin
         $sourceMap[$size] = $source;
     }
 
+    $allSizes = finished_sizes_catalog();
+    
+    foreach (array_keys($sourceMap) as $size) {
+        if (!in_array($size, $allSizes, true)) {
+            $allSizes[] = $size;
+        }
+    }
+    foreach (array_keys($openingMap) as $size) {
+        if (!in_array($size, $allSizes, true)) {
+            $allSizes[] = $size;
+        }
+    }
+
     $result = [];
-    foreach (finished_sizes_catalog() as $idx => $size) {
+    $idx = 0;
+    foreach ($allSizes as $size) {
         $src = isset($sourceMap[$size]) && is_array($sourceMap[$size]) ? $sourceMap[$size] : [];
 
         $opening = safe_num($openingMap[$size] ?? 0);
@@ -641,10 +763,11 @@ function recompute_finished_items_with_opening(array $sourceItems, array $openin
         $proRejection = safe_num($src['proRejection'] ?? 0);
         $loadingRejection = safe_num($src['loadingRejection'] ?? 0);
         $selfUse = safe_num($src['selfUse'] ?? 0);
+        $inAutoclave = safe_num($src['inAutoclave'] ?? 0);
         $closing = ($opening + $segregation) - ($sale + $proRejection + $loadingRejection + $selfUse);
 
         $result[] = [
-            'id' => $idx,
+            'id' => $idx++,
             'size' => $size,
             'opening' => $opening,
             'segregation' => $segregation,
@@ -652,6 +775,7 @@ function recompute_finished_items_with_opening(array $sourceItems, array $openin
             'proRejection' => $proRejection,
             'loadingRejection' => $loadingRejection,
             'selfUse' => $selfUse,
+            'inAutoclave' => $inAutoclave,
             'closing' => $closing,
         ];
     }
@@ -798,6 +922,8 @@ if ($path === '/health' && $method === 'GET') {
 }
 
 if ($path === '/auth/login' && $method === 'POST') {
+    seed_default_team_users($pdo);
+
     $body = read_json_body();
     $username = strtolower(trim((string) ($body['username'] ?? '')));
     $password = (string) ($body['password'] ?? '');
@@ -827,7 +953,7 @@ if ($path === '/auth/login' && $method === 'POST') {
         'user' => [
             'id' => (string) $user['id'],
             'username' => (string) $user['username'],
-            'role' => (string) $user['role'],
+            'role' => normalize_role((string) $user['role']),
         ],
     ]);
 }
@@ -835,6 +961,98 @@ if ($path === '/auth/login' && $method === 'POST') {
 if ($path === '/auth/me' && $method === 'GET') {
     $auth = require_auth($cfg['jwt_secret']);
     json_response(['user' => $auth]);
+}
+
+if ($path === '/auth/users' && $method === 'GET') {
+    $user = require_auth($cfg['jwt_secret']);
+    require_roles($user, ['management']);
+
+    seed_default_team_users($pdo);
+
+    $stmt = $pdo->query('SELECT id, username, role FROM app_users ORDER BY role ASC, username ASC');
+    $users = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $serialized = serialize_user_row($row);
+        if (!in_array($serialized['role'], ['sale', 'loading', 'account', 'production'], true)) {
+            continue;
+        }
+
+        if (preg_match('/^(?:smoke|diag|debug)_loading_\d+$/i', $serialized['username'])) {
+            continue;
+        }
+
+        $users[] = $serialized;
+    }
+
+    json_response(['users' => $users]);
+}
+
+if (preg_match('#^/auth/users/(\d+)$#', $path, $m) && $method === 'PATCH') {
+    $user = require_auth($cfg['jwt_secret']);
+    require_roles($user, ['management']);
+
+    seed_default_team_users($pdo);
+
+    $targetId = (string) $m[1];
+    $targetStmt = $pdo->prepare('SELECT id, username, password_hash, role FROM app_users WHERE id = ? LIMIT 1');
+    $targetStmt->execute([$targetId]);
+    $target = $targetStmt->fetch();
+    if ($target === false) {
+        json_error('User not found.', 404);
+    }
+
+    $body = read_json_body();
+    $nextUsername = strtolower(trim((string) ($body['username'] ?? '')));
+    $nextPassword = (string) ($body['password'] ?? '');
+    $currentPassword = (string) ($body['currentPassword'] ?? '');
+
+    $updates = [];
+
+    if ($nextUsername !== '' && $nextUsername !== (string) $target['username']) {
+        $duplicateStmt = $pdo->prepare('SELECT id FROM app_users WHERE username = ? LIMIT 1');
+        $duplicateStmt->execute([$nextUsername]);
+        $duplicate = $duplicateStmt->fetch();
+        if ($duplicate !== false && (string) $duplicate['id'] !== $targetId) {
+            json_error('Username already exists.', 409);
+        }
+
+        $updates['username'] = $nextUsername;
+    }
+
+    if ($nextPassword !== '') {
+        if (normalize_role((string) $target['role']) === 'management') {
+            if ($currentPassword === '') {
+                json_error('Current management password is required.', 400);
+            }
+
+            if (!password_verify($currentPassword, (string) $target['password_hash'])) {
+                json_error('Current management password is incorrect.', 401);
+            }
+        }
+
+        $updates['password_hash'] = password_hash($nextPassword, PASSWORD_BCRYPT);
+    }
+
+    if ($updates === []) {
+        json_error('Provide a username or password update.', 400);
+    }
+
+    $setSql = [];
+    $params = [];
+    foreach ($updates as $column => $value) {
+        $setSql[] = $column . ' = ?';
+        $params[] = $value;
+    }
+    $params[] = $targetId;
+
+    $update = $pdo->prepare('UPDATE app_users SET ' . implode(', ', $setSql) . ' WHERE id = ?');
+    $update->execute($params);
+
+    $updatedStmt = $pdo->prepare('SELECT id, username, role FROM app_users WHERE id = ? LIMIT 1');
+    $updatedStmt->execute([$targetId]);
+    $updated = $updatedStmt->fetch();
+
+    json_response(['user' => serialize_user_row(is_array($updated) ? $updated : $target)]);
 }
 
 if ($path === '/state' && $method === 'GET') {
@@ -1087,9 +1305,33 @@ if (preg_match('#^/orders/([^/]+)/(?:documents/)?mtc$#', $path, $m) && $method =
     $body = read_json_body();
     $dryDensityResult = trim((string) ($body['dryDensityResult'] ?? ''));
     $compressiveStrengthResult = trim((string) ($body['compressiveStrengthResult'] ?? ''));
+    $requirementField1 = trim((string) ($body['requirementField1'] ?? ''));
+    $requirementField2 = trim((string) ($body['requirementField2'] ?? ''));
+    $issueDate = trim((string) ($body['issueDate'] ?? ''));
+    $testingDate = trim((string) ($body['testingDate'] ?? ''));
 
-    if ($dryDensityResult === '' || $compressiveStrengthResult === '') {
-        json_error('Dry Density Result and Compressive Strength Result are required.', 400);
+    $missing = [];
+    if ($issueDate === '') {
+        $missing[] = 'Date of Issue';
+    }
+    if ($testingDate === '') {
+        $missing[] = 'Date of Testing';
+    }
+    if ($requirementField1 === '') {
+        $missing[] = 'Requirement Field 1';
+    }
+    if ($requirementField2 === '') {
+        $missing[] = 'Requirement Field 2';
+    }
+    if ($dryDensityResult === '') {
+        $missing[] = 'Dry Density Result';
+    }
+    if ($compressiveStrengthResult === '') {
+        $missing[] = 'Compressive Strength Result';
+    }
+
+    if ($missing !== []) {
+        json_error('Missing required fields: ' . implode(', ', $missing), 400);
     }
 
     // Validate numeric values
@@ -1098,6 +1340,14 @@ if (preg_match('#^/orders/([^/]+)/(?:documents/)?mtc$#', $path, $m) && $method =
     }
     if (!is_numeric($compressiveStrengthResult)) {
         json_error('Compressive Strength Result must be a number.', 400);
+    }
+
+    $dateRe = '/^\d{2}-\d{2}-\d{4}$/';
+    if ($issueDate === '' || !preg_match($dateRe, $issueDate)) {
+        json_error('Date of Issue must be in dd-mm-yyyy format.', 400);
+    }
+    if ($testingDate === '' || !preg_match($dateRe, $testingDate)) {
+        json_error('Date of Testing must be in dd-mm-yyyy format.', 400);
     }
 
     // Validate reasonable ranges (optional but recommended)
@@ -1120,8 +1370,10 @@ if (preg_match('#^/orders/([^/]+)/(?:documents/)?mtc$#', $path, $m) && $method =
     $testData = [
         'dryDensityResult' => $dryDensityResult,
         'compressiveStrengthResult' => $compressiveStrengthResult,
-        'issueDate' => format_date_dd_mm_yyyy($issueDateIso),
-        'testingDate' => format_date_dd_mm_yyyy($testingDateIso),
+        'requirementField1' => $requirementField1,
+        'requirementField2' => $requirementField2,
+        'issueDate' => $issueDate,
+        'testingDate' => $testingDate,
     ];
 
     $mtcDir = $cfg['upload_dir'] . DIRECTORY_SEPARATOR . 'mtc' . DIRECTORY_SEPARATOR . $id;

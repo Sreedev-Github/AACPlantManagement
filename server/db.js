@@ -26,6 +26,7 @@ const buildPoolConfig = () => {
     connectionLimit: 10,
     namedPlaceholders: true,
     ssl: sslEnabled ? { rejectUnauthorized: false } : undefined,
+    connectTimeout: 20000,
   };
 };
 
@@ -126,17 +127,65 @@ const tableRef = (tableName) => {
 };
 
 const readRows = async (tableName) => {
+  if (tableName === 'app_users') {
+    const [rows] = await getPool().query(`SELECT id, username, password_hash, role, created_at FROM ${tableRef(tableName)}`);
+    return rows.map((row) => ({
+      id: String(row.id),
+      _id: String(row.id),
+      username: row.username,
+      passwordHash: row.password_hash,
+      role: row.role,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.created_at).toISOString(),
+    }));
+  }
+  if (tableName === 'app_state') {
+    const [rows] = await getPool().query(`SELECT id, data, updated_at FROM ${tableRef(tableName)}`);
+    return rows.map((row) => normalizeStoredDoc(row));
+  }
   const [rows] = await getPool().query(`SELECT id, data, created_at, updated_at FROM ${tableRef(tableName)}`);
   return rows.map((row) => normalizeStoredDoc(row));
 };
 
 const writeDoc = async (tableName, doc) => {
+  if (tableName === 'app_users') {
+    const payload = stripInternalFields(doc);
+    if (doc.id || doc._id) {
+      const id = String(doc.id || doc._id);
+      await getPool().query(
+        `UPDATE ${tableRef(tableName)} SET username = ?, password_hash = ?, role = ? WHERE id = ?`,
+        [payload.username, payload.passwordHash, payload.role, id]
+      );
+      return id;
+    } else {
+      const [result] = await getPool().query(
+        `INSERT INTO ${tableRef(tableName)} (username, password_hash, role) VALUES (?, ?, ?)`,
+        [payload.username, payload.passwordHash, payload.role]
+      );
+      return String(result.insertId);
+    }
+  }
+
   const id = String(doc.id || doc._id || randomUUID());
   const payload = stripInternalFields(doc);
   const now = nowIso();
 
   if (!payload.createdAt) payload.createdAt = now;
   payload.updatedAt = payload.updatedAt || now;
+
+  if (tableName === 'app_state') {
+    await getPool().query(
+      `
+        INSERT INTO ${tableRef(tableName)} (id, data, updated_at)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          data = VALUES(data),
+          updated_at = VALUES(updated_at)
+      `,
+      [id, toJson(payload), payload.updatedAt],
+    );
+    return id;
+  }
 
   await getPool().query(
     `
@@ -255,6 +304,17 @@ class MysqlCollection {
 
 const tableSchemas = Object.values(COLLECTIONS).map((tableName) => {
   assertSafeTableName(tableName);
+  if (tableName === 'app_users') {
+    return `
+      CREATE TABLE IF NOT EXISTS ${tableRef(tableName)} (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(120) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
+  }
   return `
     CREATE TABLE IF NOT EXISTS ${tableRef(tableName)} (
       id VARCHAR(64) NOT NULL PRIMARY KEY,
@@ -308,6 +368,8 @@ export const ensureIndexes = async () => {
   if (initialized) return;
 
   await connectToDatabase();
-  await Promise.all(tableSchemas.map((statement) => getPool().query(statement)));
+  for (const statement of tableSchemas) {
+    await getPool().query(statement);
+  }
   initialized = true;
 };

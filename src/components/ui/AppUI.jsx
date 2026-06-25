@@ -50,7 +50,7 @@ export const InputGroup = ({ label, children }) => (
   </div>
 );
 
-export const EditableCell = ({ value, onUpdate, type = 'text', className = '', inputMode = 'text', tableId, rowIndex, colIndex, readOnly = false }) => {
+export const EditableCell = ({ value, onUpdate, type = 'text', className = '', inputMode = 'text', tableId, rowIndex, colIndex, readOnly = false, displayFormatter = null }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [localValue, setLocalValue] = useState(value || '');
   const inputRef = useRef(null);
@@ -134,6 +134,16 @@ export const EditableCell = ({ value, onUpdate, type = 'text', className = '', i
     );
   }
 
+  // Prepare display value: use provided formatter or fallback for date types
+  let displayValue = value;
+  if (!displayFormatter && type === 'date' && value) {
+    const parts = String(value).split('-');
+    if (parts.length === 3) {
+      const [yyyy, mm, dd] = parts;
+      displayValue = `${dd}-${mm}-${yyyy}`;
+    }
+  }
+
   return (
     <div
       ref={cellRef}
@@ -143,7 +153,7 @@ export const EditableCell = ({ value, onUpdate, type = 'text', className = '', i
       onKeyDown={handleKeyDownDiv}
       className={`w-full h-full px-1 py-3 ${readOnly ? 'cursor-default' : 'cursor-text hover:bg-blue-50 focus:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-300'} rounded transition-colors font-bold text-sm text-slate-700 leading-relaxed ${className} flex items-center justify-end`}
     >
-      {value || (value === 0 ? '0' : '')}
+      {displayFormatter ? (value ? displayFormatter(value) : '') : (displayValue || (displayValue === 0 ? '0' : ''))}
     </div>
   );
 };

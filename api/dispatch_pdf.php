@@ -4,11 +4,179 @@ declare(strict_types=1);
 
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'pdf_fpdi_helpers.php';
 
+function dispatch_pdf_sum_numeric_values($value): ?float
+{
+    if (is_array($value)) {
+        $parts = $value;
+    } else {
+        $raw = trim((string) ($value ?? ''));
+        if ($raw === '' || $raw === '-') {
+            return null;
+        }
+        $decoded = @json_decode($raw, true);
+        if (is_array($decoded)) {
+            $parts = $decoded;
+        } else {
+            $parts = explode(',', $raw);
+        }
+    }
+
+    $sum = 0.0;
+    $hasValue = false;
+
+    foreach ($parts as $p) {
+        $str = trim(str_replace(['"', "'", '[', ']'], '', (string) $p));
+        if ($str !== '' && is_numeric($str)) {
+            $sum += (float) $str;
+            $hasValue = true;
+        }
+    }
+
+    return $hasValue ? $sum : null;
+}
+
+function dispatch_pdf_get_size_volume($size): ?float
+{
+    preg_match_all('/\d+(?:\.\d+)?/u', (string) $size, $matches);
+    $parts = $matches[0] ?? [];
+    if (count($parts) < 3) {
+        return null;
+    }
+    $parts = array_slice($parts, 0, 3);
+    $l = (float) $parts[0];
+    $w = (float) $parts[1];
+    $h = (float) $parts[2];
+    if ($l <= 0 || $w <= 0 || $h <= 0) {
+        return null;
+    }
+    return ($l / 1000.0) * ($w / 1000.0) * ($h / 1000.0);
+}
+
+function dispatch_pdf_derive_pieces($cbm, $size): int
+{
+    $cbmValue = (float) $cbm;
+    $vol = dispatch_pdf_get_size_volume($size);
+    if ($cbmValue <= 0 || $vol === null || $vol <= 0) {
+        return 0;
+    }
+    return (int) max(0, round($cbmValue / $vol));
+}
+
 function dispatch_pdf_build_values(array $order): array
 {
     $truckType = dispatch_pdf_format_truck_type($order['truckType'] ?? ($order['vehicleType'] ?? ''));
     $invoiceNum = (string) ($order['invoiceId'] ?? ($order['invoiceNumber'] ?? ''));
     $formattedInvoiceId = format_invoice_id($invoiceNum, $order['orderDate'] ?? null);
+    
+    $isDispatched = (isset($order['status']) && $order['status'] === 'Dispatched') || !empty($order['dispatchSlip']);
+
+    $sizesList = [];
+    $cbmsList = [];
+    $piecesList = [];
+
+    if ($isDispatched) {
+        $rawSizes = explode(',', (string) ($order['size'] ?? ''));
+        $rawSizes = array_values(array_filter(array_map('trim', $rawSizes)));
+        
+        $totalCbm = (float) ($order['cbm'] ?? 0);
+        $totalPieces = (int) ($order['piecesLoaded'] ?? 0);
+        
+        $additional = $order['additionalProducts'] ?? [];
+        if (!is_array($additional)) {
+            $additional = [];
+        }
+        
+        $additionalCbmSum = 0.0;
+        $additionalPiecesSum = 0;
+        
+        $additionalItems = [];
+        foreach ($additional as $p) {
+            if (is_array($p)) {
+                $pCbm = (float) ($p['cbm'] ?? 0);
+                $pSize = $p['size'] ?? '';
+                $pPieces = dispatch_pdf_derive_pieces($pCbm, $pSize);
+                
+                $additionalCbmSum += $pCbm;
+                $additionalPiecesSum += $pPieces;
+                
+                $additionalItems[] = ['cbm' => $pCbm, 'pieces' => $pPieces];
+            }
+        }
+        
+        $primaryCbm = max(0.0, $totalCbm - $additionalCbmSum);
+        $primaryPieces = max(0, $totalPieces - $additionalPiecesSum);
+        
+        foreach ($rawSizes as $idx => $sz) {
+            $sizesList[] = $sz;
+            if ($idx === 0) {
+                $cbmsList[] = $primaryCbm;
+                $piecesList[] = $primaryPieces;
+            } else {
+                $addIndex = $idx - 1;
+                $addCbm = isset($additionalItems[$addIndex]) ? $additionalItems[$addIndex]['cbm'] : 0.0;
+                $addPieces = isset($additionalItems[$addIndex]) ? $additionalItems[$addIndex]['pieces'] : 0;
+                $cbmsList[] = $addCbm;
+                $piecesList[] = $addPieces;
+            }
+        }
+    } else {
+        if (!empty($order['size'])) {
+            $sizesList[] = $order['size'];
+            $cbmsList[] = (float) ($order['cbm'] ?? 0);
+            $piecesList[] = isset($order['piecesLoaded']) ? (int) $order['piecesLoaded'] : dispatch_pdf_derive_pieces($order['cbm'] ?? 0, $order['size']);
+        }
+        
+        if (isset($order['sizes']) && is_array($order['sizes'])) {
+            foreach ($order['sizes'] as $sRow) {
+                if (is_array($sRow)) {
+                    if (!empty($sRow['size'])) {
+                        $sizesList[] = $sRow['size'];
+                        $cbmsList[] = (float) ($sRow['cbm'] ?? 0);
+                        $piecesList[] = dispatch_pdf_derive_pieces($sRow['cbm'] ?? 0, $sRow['size']);
+                    }
+                }
+            }
+        }
+
+        if (isset($order['additionalProducts']) && is_array($order['additionalProducts'])) {
+            foreach ($order['additionalProducts'] as $prod) {
+                if (is_array($prod)) {
+                    if (!empty($prod['size'])) {
+                        $sizesList[] = $prod['size'];
+                        $cbmsList[] = (float) ($prod['cbm'] ?? 0);
+                        $piecesList[] = dispatch_pdf_derive_pieces($prod['cbm'] ?? 0, $prod['size']);
+                    }
+                }
+            }
+        }
+    }
+
+    $formattedSizes = dispatch_pdf_format_size($sizesList);
+
+    $piecesParts = [];
+    foreach ($piecesList as $p) {
+        $piecesParts[] = dispatch_pdf_format_number((string) $p, 0) . ' PCS';
+    }
+    $piecesStr = !empty($piecesParts) ? implode(', ', $piecesParts) : '-';
+
+    $cbmParts = [];
+    foreach ($cbmsList as $c) {
+        $cbmParts[] = dispatch_pdf_format_number($c, 3, true);
+    }
+    $cbmBase = implode(', ', $cbmParts);
+
+    $bjmVal = $order['bjm'] ?? null;
+    $hasBjm = ($bjmVal !== null && $bjmVal !== '' && $bjmVal !== 0 && $bjmVal !== '0' && $bjmVal !== '-');
+    if ($hasBjm) {
+        $bjmFormatted = dispatch_pdf_format_number($bjmVal, 3, true);
+        if ($cbmBase === '' || $cbmBase === '-') {
+            $cbmStr = $bjmFormatted . ' BJM';
+        } else {
+            $cbmStr = $cbmBase . ', ' . $bjmFormatted . ' BJM';
+        }
+    } else {
+        $cbmStr = ($cbmBase === '') ? '-' : $cbmBase;
+    }
 
     return [
         'dateInvoiceId' => dispatch_pdf_format_date($order['orderDate'] ?? '') . ' / ' . dispatch_pdf_to_upper_display($formattedInvoiceId),
@@ -24,13 +192,9 @@ function dispatch_pdf_build_values(array $order): array
         'driverName' => dispatch_pdf_to_upper_display($order['driverName'] ?? ''),
         'mobileNumber' => dispatch_pdf_to_upper_display($order['driverContact'] ?? ''),
         'transporterName' => dispatch_pdf_to_upper_display($order['transporter'] ?? ''),
-        'size' => dispatch_pdf_format_size($order['size'] ?? ''),
-        'piecesLoaded' => dispatch_pdf_normalize_text($order['piecesLoaded'] ?? null) !== '-'
-            ? dispatch_pdf_format_number($order['piecesLoaded'], 0) . ' PCS'
-            : '-',
-        'cbm' => dispatch_pdf_normalize_text($order['cbm'] ?? null) !== '-'
-            ? dispatch_pdf_format_number($order['cbm'], 3, true) . ' CBM'
-            : '-',
+        'size' => $formattedSizes,
+        'piecesLoaded' => $piecesStr,
+        'cbm' => $cbmStr,
         'loadStartTime' => dispatch_pdf_to_upper_display($order['loadStartTime'] ?? ''),
         'loadFinishTime' => dispatch_pdf_to_upper_display($order['loadFinishTime'] ?? ''),
         'loading' => dispatch_pdf_to_upper_display($order['loadingBy'] ?? ''),
@@ -48,9 +212,34 @@ function generateDispatchPDF(array $order): string
 
     $tableLeft = 25.0;
     $tableTop = 55.0;
-    $tableWidth = 160.0;
     $labelWidth = 46.0;
-    $valueWidth = $tableWidth - $labelWidth;
+    $baseValueWidth = 114.0;
+
+    // Dynamically increase value column width if any text is too long
+    $pdf->SetFont('Helvetica', 'B', 8.8);
+    $requiredValueWidth = $baseValueWidth;
+
+    $fieldsToCheck = [
+        $values['dateInvoiceId'],
+        $values['consignee'],
+        $values['address'],
+        $values['vehicleAndType'],
+        $values['driverName'],
+        $values['mobileNumber'],
+        $values['transporterName'],
+        $values['size'],
+        $values['cbm']
+    ];
+
+    foreach ($fieldsToCheck as $text) {
+        $textWidth = $pdf->GetStringWidth((string) $text) + 2.4; // 1.2 padding on each side
+        if ($textWidth > $requiredValueWidth) {
+            $requiredValueWidth = $textWidth;
+        }
+    }
+
+    $maxValueWidth = 200.0 - $tableLeft - $labelWidth; // Leaves a 10mm right margin threshold
+    $valueWidth = min($requiredValueWidth, $maxValueWidth);
     $rowHeight = 10.0;
 
     $rows = [

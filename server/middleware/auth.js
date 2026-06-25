@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 
 import { config } from '../config.js';
+import { normalizeRole } from '../constants.js';
 
 export const requireAuth = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
@@ -15,10 +16,10 @@ export const requireAuth = (req, res, next) => {
     req.user = {
       userId: payload.sub,
       username: payload.username,
-      role: String(payload.role || '').toLowerCase(),
+      role: normalizeRole(payload.role),
     };
     return next();
-  } catch (_error) {
+  } catch {
     return res.status(401).json({ message: 'Invalid or expired token.' });
   }
 };

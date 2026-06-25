@@ -122,20 +122,43 @@ function dispatch_pdf_format_number($value, int $decimals = 0, bool $trimTrailin
 
 function dispatch_pdf_format_size($size): string
 {
-    $raw = trim((string) ($size ?? ''));
-    if ($raw === '') {
+    $sizes = [];
+    if (is_array($size)) {
+        $sizes = $size;
+    } else {
+        $raw = trim((string) ($size ?? ''));
+        if ($raw !== '') {
+                $decoded = @json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $sizes = $decoded;
+                } else {
+                    $sizes = preg_split('/[,\n|]+/', $raw, -1, PREG_SPLIT_NO_EMPTY);
+                }
+        }
+    }
+
+    $formatted = [];
+    foreach ($sizes as $s) {
+            $cleanSize = trim(str_replace(['"', "'", '[', ']', '\\'], '', (string) $s));
+            $normalized = preg_replace('/\s*[xX]\s*/u', ' X ', $cleanSize);
+        $normalized = preg_replace('/\s+/u', ' ', (string) $normalized);
+        $normalized = trim((string) $normalized);
+
+        if ($normalized === '') {
+            continue;
+        }
+
+        if (!preg_match('/MM$/i', $normalized)) {
+            $normalized .= ' MM';
+        }
+        $formatted[] = strtoupper($normalized);
+    }
+
+    if (count($formatted) === 0) {
         return '-';
     }
 
-    $normalized = preg_replace('/\s*[xX]\s*/u', ' X ', $raw);
-    $normalized = preg_replace('/\s+/u', ' ', (string) $normalized);
-    $normalized = trim((string) $normalized);
-
-    if (preg_match('/MM$/i', $normalized)) {
-        return strtoupper($normalized);
-    }
-
-    return strtoupper($normalized) . ' MM';
+    return implode(', ', $formatted);
 }
 
 function dispatch_pdf_format_truck_type($value): string
@@ -209,6 +232,16 @@ function dispatch_pdf_fit_text(Fpdi $pdf, string $text, float $maxWidth, string 
     }
 
     $pdf->SetFont($fontFamily, $fontStyle, $fontSize);
+
+    if ($pdf->GetStringWidth($safeText) <= $maxWidth) {
+        return $safeText;
+    }
+
+    $currentFontSize = $fontSize;
+    while ($currentFontSize > 4.0 && $pdf->GetStringWidth($safeText) > $maxWidth) {
+        $currentFontSize -= 0.1;
+        $pdf->SetFont($fontFamily, $fontStyle, $currentFontSize);
+    }
 
     if ($pdf->GetStringWidth($safeText) <= $maxWidth) {
         return $safeText;

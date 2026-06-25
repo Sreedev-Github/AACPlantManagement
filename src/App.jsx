@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toPng, toCanvas } from 'html-to-image';
-import { PDFDocument } from 'pdf-lib';
+import { toCanvas } from 'html-to-image';
 import { ConfirmModal, DispatchModal, DocPreviewModal, ImportModal, MtcModal } from './components/modals/AppModals';
 import {
   AppHeader,
@@ -47,16 +46,15 @@ import {
   loadOrders,
   login,
   saveDieselEntries,
+  saveFinishedStock,
   saveLogs,
+  saveRawStock,
   searchClientProfiles,
   transitionOrder,
   uploadInvoice,
   updateDispatchedOrder,
   updateOrder,
   generateMtc,
-  updateRawStockDay,
-  updateFinishedStockDay,
-  resetProductionStock,
 } from './services/localStore';
 
 // Set to 'pdf' or 'jpg' to control generated dispatch slip output format.
@@ -65,6 +63,7 @@ const DISPATCH_SLIP_OUTPUT_FORMAT = 'pdf';
 export default function App() {
   const hasBootstrappedRef = useRef(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMsg, setLoadingMsg] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [hydrated, setHydrated] = useState(false);
@@ -122,17 +121,17 @@ export default function App() {
     hsd: '',
   });
 
+  const [dieselViewDate, setDieselViewDate] = useState(getTodayString());
+
+  const [dieselIntakeForm, setDieselIntakeForm] = useState({
+    liters: '',
+  });
+
+  const [deleteDieselConfirm, setDeleteDieselConfirm] = useState(null);
+
   const user = useMemo(() => ({ uid: 'local-user' }), []);
 
-  const TEMP_LOGINS = useMemo(() => ([
-    { role: 'Sales', username: 'sales1', password: 'sales123' },
-    { role: 'Loading', username: 'loading1', password: 'load1234' },
-    { role: 'Accounts', username: 'accounts1', password: 'acc12345' },
-    { role: 'Management', username: 'manager1', password: 'manage123' },
-    { role: 'Production', username: 'prod1', password: 'prod1234' },
-  ]), []);
-
-  const canUseLegacyState = (userRole) => ['management', 'production'].includes(String(userRole || '').toLowerCase());
+  const canUseLegacyState = (userRole) => ['management', 'production', 'loading'].includes(String(userRole || '').toLowerCase());
 
   const loadAppData = async (userRole = null) => {
     const initial = canUseLegacyState(userRole) ? await loadInitialState() : {
@@ -141,13 +140,7 @@ export default function App() {
       rawStock: {},
       finishedStock: {},
     };
-    let remoteOrders = [];
-
-    try {
-      remoteOrders = await loadOrders();
-    } catch (_err) {
-      remoteOrders = [];
-    }
+    const remoteOrders = await loadOrders();
 
     setOrders(remoteOrders || []);
     setDieselEntries(initial.dieselEntries || []);
@@ -166,9 +159,15 @@ export default function App() {
         const currentUser = await getCurrentUser();
         setRole(currentUser.role || null);
         await loadAppData(currentUser.role || null);
-      } catch (_err) {
-        clearAuthToken();
-        setRole(null);
+      } catch (err) {
+        if (err.statusCode === 401 || err.statusCode === 403) {
+          clearAuthToken();
+          setRole(null);
+        } else {
+          // It's a network or server error, let the user see it
+          setAppMsg(err.message || 'Failed to connect to the server');
+          setTimeout(() => setAppMsg(null), 10000);
+        }
       } finally {
         setLoading(false);
       }
@@ -213,25 +212,17 @@ export default function App() {
     if (hydrated && canUseLegacyState(role)) saveLogs(logs);
   }, [logs, hydrated, role]);
 
+  useEffect(() => {
+    if (hydrated && canUseLegacyState(role)) saveRawStock(rawStock);
+  }, [rawStock, hydrated, role]);
+
+  useEffect(() => {
+    if (hydrated && canUseLegacyState(role)) saveFinishedStock(finishedStock);
+  }, [finishedStock, hydrated, role]);
+
   const showToast = (msg) => {
     setAppMsg(msg);
     setTimeout(() => setAppMsg(null), 3000);
-  };
-
-  const handleResetProductionStock = async () => {
-    if (!window.confirm('Clear all production stock data from the app and database?')) {
-      return;
-    }
-
-    try {
-      await resetProductionStock();
-      setRawStock({});
-      setFinishedStock({});
-      showToast('Production stock data cleared.');
-    } catch (error) {
-      console.error('Failed to reset production stock:', error);
-      showToast('Failed to clear production stock data.');
-    }
   };
 
   const patchOrderAndSync = async (orderId, updates) => {
@@ -277,50 +268,35 @@ export default function App() {
 
   const handleDownloadReport = async () => {
     try {
-      showToast('Preparing PDF...');
+      const reportType = productionTab === 'raw-material' ? 'raw' : 'finished';
+      const apiBase = String(window.__AAC_CONFIG__?.API_BASE_URL || import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+      const pdfUrl = `${apiBase}/production/report/${viewDate}/pdf?type=${reportType}`;
+      const token = getAuthToken();
 
-      const container = document.getElementById('report-container');
-      if (!container) throw new Error('Report container not found');
+      showToast('Downloading production report PDF...');
 
-      // Create a high-resolution PNG of the report container
-      const dataUrl = await toPng(container, { backgroundColor: '#ffffff', pixelRatio: 2 });
-      const res = await fetch(dataUrl);
-      const imgBytes = await res.arrayBuffer();
-
-      // Create a PDF with the image scaled to A4 width (points)
-      const pdfDoc = await PDFDocument.create();
-      const pngImage = await pdfDoc.embedPng(imgBytes);
-
-      const A4_WIDTH = 595.28; // points
-      const pngDims = pngImage.scale(1);
-      const scale = A4_WIDTH / pngDims.width;
-      const imgWidth = pngDims.width * scale;
-      const imgHeight = pngDims.height * scale;
-
-      // Create a page sized to fit the full image (so vertical length is preserved)
-      const page = pdfDoc.addPage([A4_WIDTH, imgHeight]);
-      page.drawImage(pngImage, {
-        x: 0,
-        y: 0,
-        width: imgWidth,
-        height: imgHeight,
+      const response = await fetch(pdfUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
-      const pdfBytes = await pdfDoc.save();
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Production_Report_${viewDate}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      if (!response.ok) {
+        throw new Error(`Failed to download report (${response.status})`);
+      }
 
-      showToast('Report PDF ready.');
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `Production_${reportType}_${viewDate}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objectUrl);
+
+      showToast('Report PDF downloaded successfully.');
     } catch (error) {
-      console.error('Failed to create report PDF:', error);
-      showToast('Failed to create PDF. Try again.');
+      console.error('Failed to download report:', error);
+      showToast('Failed to download report. Please try again.');
     }
   };
 
@@ -354,244 +330,65 @@ export default function App() {
     }
   }, []);
 
-  // Helper: Find the most recent raw material data before a given date
-  const getLatestRawStockBefore = (date) => {
-    let checkDate = getPreviousDateString(date);
-    let maxIterations = 365; // Search up to 1 year back
-    while (maxIterations > 0) {
-      if (rawStock[checkDate]) {
-        return rawStock[checkDate];
-      }
-      checkDate = getPreviousDateString(checkDate);
-      maxIterations -= 1;
-    }
-    return null;
-  };
-
   const getRawMaterialDataForDate = (date) => {
     if (rawStock[date]) return rawStock[date].items;
-    
-    // Search backwards for the most recent stock data
-    const baseline = getLatestRawStockBefore(date);
-    const prevMap = new Map((baseline?.items || []).map((i) => [i.desc, safeNum(i.closing)]));
-    
+    const prevDate = getPreviousDateString(date);
+    const prevData = rawStock[prevDate]?.items;
     return RAW_MATERIALS_LIST.map((item, index) => {
-      const opening = prevMap.get(item.desc) || 0;
+      const prevClosing = prevData ? safeNum(prevData.find((d) => d.desc === item.desc)?.closing) || 0 : 0;
       return {
         id: index,
         ...item,
-        opening,
+        opening: prevClosing,
         receipt: 0,
-        total: opening,
+        total: prevClosing,
         issue: 0,
-        closing: opening,
+        closing: prevClosing,
         remarks: '',
       };
     });
   };
 
-  // Helper: Find the most recent finished stock data before a given date
-  const getLatestFinishedStockBefore = (date) => {
-    let checkDate = getPreviousDateString(date);
-    let maxIterations = 365; // Search up to 1 year back
-    while (maxIterations > 0) {
-      if (finishedStock[checkDate]) {
-        return finishedStock[checkDate];
-      }
-      checkDate = getPreviousDateString(checkDate);
-      maxIterations -= 1;
-    }
-    return null;
-  };
-
   const getFinishedStockDataForDate = (date) => {
     let items = finishedStock[date]?.items;
-    
+    const prevDate = getPreviousDateString(date);
+    const prevData = finishedStock[prevDate]?.items;
+    const prevMortar = finishedStock[prevDate]?.mortarBag;
+    const prevSummary = finishedStock[prevDate]?.summary || {};
+
     if (!items) {
-      // Search backwards for the most recent stock data
-      const baseline = getLatestFinishedStockBefore(date);
-      const prevItems = new Map((baseline?.items || []).map((i) => [i.size, safeNum(i.closing)]));
-      const prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
-      const prevSummary = baseline?.summary || {};
-      
       items = FINISHED_STOCK_SIZES.map((size, index) => {
-        const opening = prevItems.get(size) || 0;
+        const prevClosing = prevData ? safeNum(prevData.find((d) => d.size === size)?.closing) || 0 : 0;
         return {
           id: index,
           size,
-          opening,
+          opening: prevClosing,
           segregation: 0,
           sale: 0,
           proRejection: 0,
           loadingRejection: 0,
           selfUse: 0,
-          closing: opening,
+          closing: prevClosing,
         };
       });
-    } else {
-      // If we already have data for this date, just use the items as-is
-      items = finishedStock[date].items;
     }
 
-    // For mortar bag, always search backwards if no data for this specific date
-    const mortarBag = finishedStock[date]?.mortarBag || (() => {
-      const baseline = getLatestFinishedStockBefore(date);
-      const prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
-      return {
-        opening: prevMortarClosing || 0,
-        receipt: 0,
-        sale: 0,
-        closing: prevMortarClosing || 0,
-      };
-    })();
+    const mortarBag = finishedStock[date]?.mortarBag || {
+      opening: prevMortar ? safeNum(prevMortar.closing) : 0,
+      receipt: 0,
+      sale: 0,
+      closing: prevMortar ? safeNum(prevMortar.closing) : 0,
+    };
 
-    // For summary, always search backwards if no data for this specific date
-    const summary = finishedStock[date]?.summary || (() => {
-      const baseline = getLatestFinishedStockBefore(date);
-      const prevSummary = baseline?.summary || {};
-      return {
-        saleDaily: 0,
-        productionDaily: 0,
-        totalSale: safeNum(prevSummary.totalSale) || 0,
-        totalProduction: safeNum(prevSummary.totalProduction) || 0,
-        totalMortarSale: 0,
-      };
-    })();
+    const summary = finishedStock[date]?.summary || {
+      saleDaily: 0,
+      productionDaily: 0,
+      totalSale: prevSummary.totalSale ? safeNum(prevSummary.totalSale) : 0,
+      totalProduction: prevSummary.totalProduction ? safeNum(prevSummary.totalProduction) : 0,
+      totalMortarSale: 0,
+    };
 
     return { items, mortarBag, summary };
-  };
-
-  const rebuildRawStockChain = (stock, startDate, sourceItems) => {
-    const nextStock = { ...stock };
-    const sourceMap = new Map((Array.isArray(sourceItems) ? sourceItems : []).map((item) => [String(item?.desc || ''), item]));
-    const dates = Object.keys(nextStock).filter((date) => date >= startDate).sort();
-    if (!dates.includes(startDate)) {
-      dates.unshift(startDate);
-    }
-
-    const baseline = (() => {
-      let checkDate = getPreviousDateString(startDate);
-      let iterations = 365;
-      while (iterations > 0) {
-        if (nextStock[checkDate]) return nextStock[checkDate];
-        checkDate = getPreviousDateString(checkDate);
-        iterations -= 1;
-      }
-      return null;
-    })();
-
-    let prevMap = new Map((baseline?.items || []).map((item) => [item.desc, safeNum(item.closing)]));
-
-    for (const date of dates) {
-      const sourceItemsForDate = date === startDate ? sourceItems : (nextStock[date]?.items || []);
-      const daySourceMap = date === startDate ? sourceMap : new Map((Array.isArray(sourceItemsForDate) ? sourceItemsForDate : []).map((item) => [String(item?.desc || ''), item]));
-
-      const rebuiltItems = RAW_MATERIALS_LIST.map((item, index) => {
-        const source = daySourceMap.get(item.desc) || {};
-        const opening = safeNum(prevMap.get(item.desc));
-        const receipt = safeNum(source.receipt);
-        const issue = safeNum(source.issue);
-        const total = opening + receipt;
-        const closing = total - issue;
-
-        return {
-          id: index,
-          desc: item.desc,
-          unit: item.unit,
-          opening,
-          receipt,
-          total,
-          issue,
-          closing,
-          remarks: String(source.remarks || ''),
-        };
-      });
-
-      nextStock[date] = {
-        ...(nextStock[date] || {}),
-        items: rebuiltItems,
-        timestamp: createTimestamp(),
-      };
-      prevMap = new Map(rebuiltItems.map((item) => [item.desc, safeNum(item.closing)]));
-    }
-
-    return nextStock;
-  };
-
-  const rebuildFinishedStockChain = (stock, startDate, sourcePayload) => {
-    const nextStock = { ...stock };
-    const dates = Object.keys(nextStock).filter((date) => date >= startDate).sort();
-    if (!dates.includes(startDate)) {
-      dates.unshift(startDate);
-    }
-
-    const baseline = (() => {
-      let checkDate = getPreviousDateString(startDate);
-      let iterations = 365;
-      while (iterations > 0) {
-        if (nextStock[checkDate]) return nextStock[checkDate];
-        checkDate = getPreviousDateString(checkDate);
-        iterations -= 1;
-      }
-      return null;
-    })();
-
-    let prevMap = new Map((baseline?.items || []).map((item) => [item.size, safeNum(item.closing)]));
-    let prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
-
-    for (const date of dates) {
-      const source = date === startDate ? sourcePayload : (nextStock[date] || {});
-      const sourceItemMap = new Map((Array.isArray(source.items) ? source.items : []).map((item) => [String(item?.size || ''), item]));
-
-      const rebuiltItems = FINISHED_STOCK_SIZES.map((size, index) => {
-        const itemSource = sourceItemMap.get(size) || {};
-        const opening = safeNum(prevMap.get(size));
-        const segregation = safeNum(itemSource.segregation);
-        const sale = safeNum(itemSource.sale);
-        const proRejection = safeNum(itemSource.proRejection);
-        const loadingRejection = safeNum(itemSource.loadingRejection);
-        const selfUse = safeNum(itemSource.selfUse);
-        const closing = (opening + segregation) - (sale + proRejection + loadingRejection + selfUse);
-
-        return {
-          id: index,
-          size,
-          opening,
-          segregation,
-          sale,
-          proRejection,
-          loadingRejection,
-          selfUse,
-          closing,
-        };
-      });
-
-      const sourceMortar = source.mortarBag || {};
-      const mortarBag = {
-        opening: prevMortarClosing,
-        receipt: safeNum(sourceMortar.receipt),
-        sale: safeNum(sourceMortar.sale),
-        closing: prevMortarClosing + safeNum(sourceMortar.receipt) - safeNum(sourceMortar.sale),
-      };
-
-      const summary = {
-        ...(source.summary || {}),
-        saleDaily: rebuiltItems.reduce((acc, item) => acc + safeNum(item.sale), 0),
-      };
-
-      nextStock[date] = {
-        ...(nextStock[date] || {}),
-        items: rebuiltItems,
-        mortarBag,
-        summary,
-        timestamp: createTimestamp(),
-      };
-
-      prevMap = new Map(rebuiltItems.map((item) => [item.size, safeNum(item.closing)]));
-      prevMortarClosing = safeNum(mortarBag.closing);
-    }
-
-    return nextStock;
   };
 
   const updateRawStock = (index, field, value) => {
@@ -610,11 +407,13 @@ export default function App() {
     newData[index].total = op + rec;
     newData[index].closing = newData[index].total - iss;
 
-    setRawStock((prev) => rebuildRawStockChain(prev, viewDate, newData));
-
-    void updateRawStockDay(viewDate, newData).catch((error) => {
-      console.error('Failed to persist raw stock update:', error);
-    });
+    setRawStock((prev) => ({
+      ...prev,
+      [viewDate]: {
+        items: newData,
+        timestamp: createTimestamp(),
+      },
+    }));
 
     logAction('STOCK UPDATE', `Updated ${newData[index].desc} stock for ${viewDate}`);
   };
@@ -640,19 +439,15 @@ export default function App() {
     const newSaleDaily = newData.reduce((acc, item) => acc + safeNum(item.sale), 0);
     const newSummary = { ...summary, saleDaily: newSaleDaily };
 
-    setFinishedStock((prev) => rebuildFinishedStockChain(prev, viewDate, {
-      items: newData,
-      mortarBag,
-      summary: newSummary,
+    setFinishedStock((prev) => ({
+      ...prev,
+      [viewDate]: {
+        items: newData,
+        mortarBag,
+        summary: newSummary,
+        timestamp: createTimestamp(),
+      },
     }));
-
-    void updateFinishedStockDay(viewDate, {
-      items: newData,
-      mortarBag,
-      summary: newSummary,
-    }).catch((error) => {
-      console.error('Failed to persist finished stock update:', error);
-    });
 
     logAction('STOCK UPDATE', `Updated ${newData[index].size} finished stock for ${viewDate}`);
   };
@@ -670,19 +465,15 @@ export default function App() {
     const sale = safeNum(newMortar.sale);
     newMortar.closing = op + rec - sale;
 
-    setFinishedStock((prev) => rebuildFinishedStockChain(prev, viewDate, {
-      items,
-      mortarBag: newMortar,
-      summary,
+    setFinishedStock((prev) => ({
+      ...prev,
+      [viewDate]: {
+        items,
+        mortarBag: newMortar,
+        summary,
+        timestamp: createTimestamp(),
+      },
     }));
-
-    void updateFinishedStockDay(viewDate, {
-      items,
-      mortarBag: newMortar,
-      summary,
-    }).catch((error) => {
-      console.error('Failed to persist mortar bag update:', error);
-    });
   };
 
   const updateProductionSummary = (field, value) => {
@@ -703,14 +494,6 @@ export default function App() {
         timestamp: createTimestamp(),
       },
     }));
-
-    void updateFinishedStockDay(viewDate, {
-      items,
-      mortarBag,
-      summary: newSummary,
-    }).catch((error) => {
-      console.error('Failed to persist production summary update:', error);
-    });
   };
 
   const handleEditOrder = (order) => {
@@ -744,6 +527,7 @@ export default function App() {
   const confirmDeleteOrder = async () => {
     if (!deleteConfirmId) return;
 
+    setLoadingMsg('Deleting order...');
     try {
       await deleteOrder(deleteConfirmId);
       setOrders((prev) => prev.filter((order) => order.id !== deleteConfirmId));
@@ -752,6 +536,8 @@ export default function App() {
       setDeleteConfirmId(null);
     } catch (error) {
       showToast(error.message || 'Failed to delete order');
+    } finally {
+      setLoadingMsg(null);
     }
   };
 
@@ -763,34 +549,55 @@ export default function App() {
       return;
     }
 
-    const toNumberOrZero = (value) => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
+    const parseNumber = (value, fieldName, isInteger = false) => {
+      const strVal = String(value ?? '').trim();
+      if (strVal === '') return 0;
+      const parsed = Number(strVal);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(`${fieldName} must be a valid number.`);
+      }
+      if (isInteger && !Number.isInteger(parsed)) {
+        throw new Error(`${fieldName} must be an integer.`);
+      }
+      return parsed;
     };
 
+    let primaryQuantityValue, primaryCbm, bjm, rate, bjmRate, additionalProducts;
     const primaryQuantityUnit = formData.quantityUnit || 'CBM';
     const primaryQuantityRaw = String(formData.quantityValue ?? formData.cbm ?? '').trim();
-    const primaryQuantityValue = primaryQuantityRaw === '' ? 0 : toNumberOrZero(primaryQuantityRaw);
-    const primaryCbm = primaryQuantityUnit === 'PCS'
-      ? convertPiecesToCbm(primaryQuantityValue, formData.size)
-      : primaryQuantityValue;
 
-    const additionalProducts = (formData.additionalProducts || [])
-      .map((item) => {
-        const quantity = toNumberOrZero(item.quantity);
-        if (!quantity) return null;
-        const unit = item.quantityUnit || 'CBM';
-        const size = item.size || SIZES[3];
-        const cbm = unit === 'PCS' ? convertPiecesToCbm(quantity, size) : quantity;
-        return {
-          size,
-          quantity,
-          quantityUnit: unit,
-          cbm: Number(cbm.toFixed(3)),
-          rate: toNumberOrZero(item.rate),
-        };
-      })
-      .filter(Boolean);
+    try {
+      primaryQuantityValue = parseNumber(primaryQuantityRaw, 'Quantity');
+      bjm = parseNumber(formData.bjm, 'BJM (Bags)', true);
+      rate = parseNumber(formData.rate, 'Rate (AAC Block)');
+      bjmRate = parseNumber(formData.bjmRate, 'Rate (BJM)');
+      
+      primaryCbm = primaryQuantityUnit === 'PCS'
+        ? convertPiecesToCbm(primaryQuantityValue, formData.size)
+        : primaryQuantityValue;
+
+      additionalProducts = (formData.additionalProducts || [])
+        .map((item, index) => {
+          const strQty = String(item.quantity ?? '').trim();
+          if (strQty === '') return null;
+          const quantity = parseNumber(strQty, `Additional Product ${index + 1} Quantity`);
+          if (!quantity) return null;
+          const unit = item.quantityUnit || 'CBM';
+          const size = item.size || SIZES[3];
+          const cbm = unit === 'PCS' ? convertPiecesToCbm(quantity, size) : quantity;
+          return {
+            size,
+            quantity,
+            quantityUnit: unit,
+            cbm: Number(cbm.toFixed(3)),
+            rate: parseNumber(item.rate, `Additional Product ${index + 1} Rate`),
+          };
+        })
+        .filter(Boolean);
+    } catch (err) {
+      showToast(err.message);
+      return;
+    }
 
     const normalizedFormData = {
       ...formData,
@@ -806,14 +613,15 @@ export default function App() {
       quantityUnit: primaryQuantityUnit,
       quantityValue: primaryQuantityValue,
       cbm: Number(primaryCbm.toFixed(3)),
-      bjm: toNumberOrZero(formData.bjm),
-      rate: toNumberOrZero(formData.rate),
-      bjmRate: toNumberOrZero(formData.bjmRate),
+      bjm: bjm,
+      rate: rate,
+      bjmRate: bjmRate,
       aacRateManualOverride: Boolean(formData.aacRateManualOverride),
       bjmRateManualOverride: Boolean(formData.bjmRateManualOverride),
       additionalProducts,
     };
 
+    setLoadingMsg(editingOrderId ? 'Updating order...' : 'Creating order...');
     try {
       if (editingOrderId) {
         await patchOrderAndSync(editingOrderId, normalizedFormData);
@@ -833,6 +641,8 @@ export default function App() {
     } catch (error) {
       showToast(error.message || 'Failed to save order');
       return;
+    } finally {
+      setLoadingMsg(null);
     }
 
     setView('daily-log');
@@ -861,25 +671,89 @@ export default function App() {
   const handleManualDieselSubmit = (e) => {
     e.preventDefault();
 
+    if (!String(manualDieselForm.name || '').trim()) {
+      showToast('Vehicle Number is required.');
+      return;
+    }
+
+    if (!String(manualDieselForm.location || '').trim()) {
+      showToast('Site / Location is required.');
+      return;
+    }
+
     if (!String(manualDieselForm.purpose || '').trim()) {
       showToast('Purpose is required for in-plant diesel entries.');
       return;
     }
 
+    if (!String(manualDieselForm.driver || '').trim()) {
+      showToast('Operator / Issued To is required.');
+      return;
+    }
+
+    const selectedDate = String(dieselViewDate || getTodayString()).trim() || getTodayString();
+    const liters = Number(manualDieselForm.hsd);
+
+    if (!Number.isFinite(liters)) {
+      showToast('HSD must be a valid number.');
+      return;
+    }
+
+    const kmStr = String(manualDieselForm.km || '').trim();
+    if (kmStr !== '' && !Number.isFinite(Number(kmStr))) {
+      showToast('KM / Hrs must be a valid number.');
+      return;
+    }
+
     const newEntry = {
       id: createId(),
+      date: selectedDate,
       ...manualDieselForm,
+      hsd: liters,
+      km: kmStr !== '' ? Number(kmStr) : undefined,
       purpose: String(manualDieselForm.purpose || '').trim(),
+      flowType: 'Usage',
       createdAt: createTimestamp(),
     };
 
     setDieselEntries((prev) => [newEntry, ...prev]);
     logAction('DIESEL ENTRY', `Added entry for ${manualDieselForm.name}`);
     showToast('In-Plant Entry Added');
-    setManualDieselForm({ date: getTodayString(), name: '', location: '', purpose: '', driver: '', hsd: '' });
+    setManualDieselForm({ date: selectedDate, name: '', location: '', purpose: '', driver: '', hsd: '', km: '' });
+  };
+
+  const handleDieselIntakeSubmit = (e) => {
+    e.preventDefault();
+
+    const liters = Number(dieselIntakeForm.liters);
+    if (!Number.isFinite(liters) || liters <= 0) {
+      showToast('Please enter a valid diesel intake amount.');
+      return;
+    }
+
+    const selectedDate = String(dieselViewDate || getTodayString()).trim() || getTodayString();
+
+    const newEntry = {
+      id: createId(),
+      date: selectedDate,
+      name: 'Diesel Intake',
+      location: 'Tank',
+      driver: 'Store',
+      purpose: 'Fuel Intake',
+      hsd: liters,
+      liters,
+      flowType: 'Inflow',
+      createdAt: createTimestamp(),
+    };
+
+    setDieselEntries((prev) => [newEntry, ...prev]);
+    logAction('DIESEL INTAKE', `Added diesel intake of ${liters}`);
+    showToast('Diesel intake added');
+    setDieselIntakeForm({ liters: '' });
   };
 
   const handleBulkImport = async (data) => {
+    setLoadingMsg('Importing orders...');
     try {
       const records = await Promise.all(
         data.map((item) => createOrder({
@@ -894,10 +768,13 @@ export default function App() {
       setShowImportModal(false);
     } catch (error) {
       showToast(error.message || 'Failed to import orders');
+    } finally {
+      setLoadingMsg(null);
     }
   };
 
   const updateStatus = async (orderId, newStatus, extraData = {}) => {
+    setLoadingMsg('Updating order status...');
     try {
       const updatedOrder = await transitionOrder(orderId, newStatus, extraData);
       setOrders((prev) => prev.map((order) => (order.id === orderId ? updatedOrder : order)));
@@ -905,11 +782,21 @@ export default function App() {
       showToast('Status updated');
     } catch (error) {
       showToast(error.message || 'Failed to update status');
+    } finally {
+      setLoadingMsg(null);
     }
   };
 
   const updateEntry = async (collectionName, id, field, value) => {
+    const resolvedField = collectionName === 'orders'
+      ? ({ date: 'orderDate', name: 'client', driver: 'driverName', km: 'tripKm' }[field] || field)
+      : field;
     let finalValue = value;
+
+    if (['date', 'orderDate'].includes(field) && !String(value || '').trim()) {
+      showToast('Date is required.');
+      return;
+    }
 
     if (['cbm', 'bjm', 'rate', 'bjmRate', 'truckType', 'netWt', 'loadingRate', 'unloadingRate', 'tripKm', 'grossWeight', 'tareWeight', 'piecesLoaded', 'hsd', 'km'].includes(field)) {
       finalValue = Number(value);
@@ -923,7 +810,7 @@ export default function App() {
 
     if (collectionName === 'orders') {
       try {
-        await patchOrderAndSync(id, { [field]: finalValue });
+        await patchOrderAndSync(id, { [resolvedField]: finalValue });
       } catch (error) {
         showToast(error.message || `Failed to update ${field}`);
         return;
@@ -932,11 +819,43 @@ export default function App() {
 
     if (collectionName === 'diesel_entries') {
       const dieselField = field === 'id' ? 'vehicle' : field;
+      if (dieselField === 'date' && !String(finalValue || '').trim()) {
+        showToast('Date is required.');
+        return;
+      }
       setDieselEntries((prev) => prev.map((entry) => (entry.id === id ? { ...entry, [dieselField]: finalValue } : entry)));
     }
 
     logAction('INLINE EDIT', `Updated ${field} to ${finalValue} in ${collectionName}`);
     showToast(`${field} updated!`);
+  };
+
+  const triggerDeleteDieselEntry = (entry) => {
+    setDeleteDieselConfirm(entry);
+  };
+
+  const confirmDeleteDieselEntry = async () => {
+    if (!deleteDieselConfirm) return;
+
+    const { collection, sourceId } = deleteDieselConfirm;
+
+    setLoadingMsg('Deleting diesel entry...');
+    try {
+      if (collection === 'orders') {
+        await patchOrderAndSync(sourceId, { hsd: '', tripKm: '' });
+        setOrders((prev) => prev.map((order) => (order.id === sourceId ? { ...order, hsd: '', tripKm: '' } : order)));
+      } else {
+        setDieselEntries((prev) => prev.filter((entry) => entry.id !== sourceId));
+      }
+
+      logAction('DELETE DIESEL ENTRY', `Deleted diesel register row ${sourceId}`);
+      showToast('Diesel entry deleted');
+      setDeleteDieselConfirm(null);
+    } catch (error) {
+      showToast(error.message || 'Failed to delete diesel entry');
+    } finally {
+      setLoadingMsg(null);
+    }
   };
 
   const updateTruckTypeAndRates = async (order, newTypeVal) => {
@@ -961,12 +880,15 @@ export default function App() {
 
     updates = { ...updates, loadingRate: newLoadRate, unloadingRate: newUnloadRate };
 
+    setLoadingMsg('Updating truck type & rates...');
     try {
       await patchOrderAndSync(order.id, updates);
       logAction('RATE UPDATE', `Updated Truck Type/Rates for Order ${order.id}`);
       showToast('Type & Rates updated');
     } catch (error) {
       showToast(error.message || 'Failed to update truck type and rates');
+    } finally {
+      setLoadingMsg(null);
     }
   };
 
@@ -984,16 +906,20 @@ export default function App() {
       if (newRate < 0) newRate = 0;
     }
 
+    setLoadingMsg('Toggling GS surcharge...');
     try {
       await patchOrderAndSync(order.id, { gsChecked: newGSState, loadingRate: newRate });
       logAction('GS TOGGLE', `Toggled GS for Order ${order.id}`);
       showToast(newGSState ? 'GS Added (+500)' : 'GS Removed');
     } catch (error) {
       showToast(error.message || 'Failed to update GS');
+    } finally {
+      setLoadingMsg(null);
     }
   };
 
   const handleFileUpload = async (orderId, type, nextStatus, file = null) => {
+    setLoadingMsg(type === 'invoice' ? 'Uploading invoice PDF...' : `Uploading ${type}...`);
     try {
       if (type === 'invoice') {
         if (!file) {
@@ -1019,6 +945,8 @@ export default function App() {
       logAction('FILE UPLOAD', `Uploaded ${type} for Order ${orderId}`);
     } catch (error) {
       showToast(error.message || 'Failed to upload file');
+    } finally {
+      setLoadingMsg(null);
     }
   };
 
@@ -1038,8 +966,15 @@ export default function App() {
 
   const handleApproveFromPreview = async () => {
     if (previewFile && previewFile.orderId) {
-      await updateStatus(previewFile.orderId, 'Approved');
-      setPreviewFile(null);
+      setLoadingMsg('Approving invoice...');
+      try {
+        await updateStatus(previewFile.orderId, 'Approved');
+        setPreviewFile(null);
+      } catch (error) {
+        showToast(error.message || 'Failed to approve invoice');
+      } finally {
+        setLoadingMsg(null);
+      }
     }
   };
 
@@ -1050,6 +985,7 @@ export default function App() {
       return;
     }
 
+    setLoadingMsg('Dispatching order & generating slip...');
     try {
       const updatedOrder = await dispatchOrder(orderId, {
         ...data,
@@ -1065,6 +1001,8 @@ export default function App() {
     } catch (error) {
       console.error('Dispatch failed:', error);
       showToast(error.message || 'Failed to dispatch order');
+    } finally {
+      setLoadingMsg(null);
     }
   };
 
@@ -1080,44 +1018,113 @@ export default function App() {
 
   const stats = getStats();
 
-  const getDieselRegisterData = () => {
+  const getDieselRegisterData = (selectedDate = dieselViewDate) => {
+    const targetDate = String(selectedDate || getTodayString()).trim() || getTodayString();
+
+    const toDieselAmount = (entry = {}) => {
+      const rawValue = entry.hsd ?? entry.liters ?? 0;
+      const parsed = Number(rawValue);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const resolveDate = (entry = {}) => {
+      const directDate = String(entry.date || entry.orderDate || '').trim();
+      return /^\d{4}-\d{2}-\d{2}/.test(directDate) ? directDate.slice(0, 10) : '';
+    };
+
+    const resolveCreatedAt = (entry = {}) => String(entry.createdAt || entry.updatedAt || resolveDate(entry) || '').trim();
+
+    const normalizeLedgerRow = (entry, collection, sourceId, flowType) => ({
+      sourceId,
+      collection,
+      flowType,
+      date: resolveDate(entry),
+      createdAt: resolveCreatedAt(entry),
+      vehicle: String(entry.vehicle || '').trim(),
+      name: String(entry.name || entry.client || '').trim(),
+      location: String(entry.location || '').trim(),
+      driver: String(entry.driver || entry.driverName || '').trim(),
+      purpose: String(entry.purpose || '').trim(),
+      km: String(entry.km ?? entry.tripKm ?? '').trim(),
+      hsd: toDieselAmount(entry),
+    });
+
     const salesData = orders
-      .filter((o) => o.hsd)
-      .map((o) => ({
-        id: o.id,
-        date: o.orderDate,
-        name: o.client,
-        location: o.location,
-        vehicle: o.vehicle,
-        driver: o.driverName || '',
-        purpose: o.purpose || 'Sales',
-        km: o.tripKm || '-',
-        hsd: o.hsd,
-        type: 'Sales',
-        collection: 'orders',
-      }));
+      .filter((order) => String(order.hsd ?? '').trim() !== '')
+      .map((order) => normalizeLedgerRow(
+        {
+          ...order,
+          name: order.client,
+          purpose: order.purpose || 'Sales',
+          km: order.tripKm ?? '',
+        },
+        'orders',
+        order.id,
+        'Usage',
+      ));
 
-    const manualData = dieselEntries.map((e) => ({
-      id: e.id,
-      date: e.date,
-      name: e.name,
-      location: e.location,
-      vehicle: e.vehicle || e.id || '',
-      driver: e.driver,
-      purpose: e.purpose || '',
-      km: e.km || '-',
-      hsd: e.hsd,
-      type: 'In-Plant',
-      collection: 'diesel_entries',
-    }));
+    const manualData = dieselEntries.map((entry) => normalizeLedgerRow(
+      entry,
+      'diesel_entries',
+      entry.id,
+      String(entry.flowType || '').toLowerCase() === 'inflow' ? 'Inflow' : 'Usage',
+    ));
 
-    return [...salesData, ...manualData].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const allEntries = [...salesData, ...manualData]
+      .filter((entry) => entry.date)
+      .sort((left, right) => (left.date.localeCompare(right.date) || left.createdAt.localeCompare(right.createdAt)));
+
+    const balanceBeforeDay = allEntries
+      .filter((entry) => entry.date < targetDate)
+      .reduce((current, entry) => (String(entry.flowType).toLowerCase() === 'inflow' ? current + entry.hsd : current - entry.hsd), 0);
+
+    let balance = balanceBeforeDay;
+    const rows = [
+      {
+        id: `opening-${targetDate}`,
+        isPlaceholder: true,
+        date: targetDate,
+        opening: balanceBeforeDay,
+        closing: balanceBeforeDay,
+      },
+    ];
+
+    allEntries
+      .filter((entry) => entry.date === targetDate)
+      .forEach((entry) => {
+        const opening = balance;
+        const amount = Number(entry.hsd) || 0;
+        const closing = String(entry.flowType).toLowerCase() === 'inflow' ? opening + amount : opening - amount;
+        balance = closing;
+
+        rows.push({
+          ...entry,
+          id: `${entry.collection}-${entry.sourceId}-${entry.date}-${entry.createdAt || 'row'}`,
+          opening,
+          closing,
+        });
+      });
+
+    return rows;
+  };
+
+  const parseDateString = (dateStr) => {
+    if (!dateStr) return 0;
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        return new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+      } else if (parts[2].length === 4) {
+        return new Date(parts[2], parts[1] - 1, parts[0]).getTime();
+      }
+    }
+    return new Date(dateStr).getTime() || 0;
   };
 
   const getLoadingReportData = () =>
     orders
       .filter((o) => o.status === 'Dispatched')
-      .sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate))
+      .sort((a, b) => parseDateString(b.orderDate) - parseDateString(a.orderDate))
       .map((o) => {
         let displayLoadRate = o.loadingRate;
         let displayUnloadRate = o.unloadingRate;
@@ -1142,7 +1149,7 @@ export default function App() {
   const getDetailedSalesData = () =>
     orders
       .filter((o) => o.status === 'Dispatched')
-      .sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate))
+      .sort((a, b) => parseDateString(b.orderDate) - parseDateString(a.orderDate))
       .map((o) => {
         const cbm = parseFloat(o.cbm) || 0;
         const rate = parseFloat(o.rate) || 0;
@@ -1195,14 +1202,27 @@ export default function App() {
   }
 
   if (!role) {
-    return <LoginView onLogin={handleLogin} loading={authLoading} error={authError} demoUsers={TEMP_LOGINS} />;
+    return <LoginView onLogin={handleLogin} loading={authLoading} error={authError} />;
   }
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20 relative">
       {appMsg && <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-slate-800 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold animate-bounce">{appMsg}</div>}
+      {loadingMsg && (
+        <div id="app-loading-overlay" className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-slate-900/60 backdrop-blur-md transition-all duration-300">
+          <div className="bg-white/95 p-8 rounded-2xl shadow-2xl border border-slate-200/50 flex flex-col items-center max-w-sm mx-4 transform scale-100 transition-all duration-300">
+            <div className="relative w-16 h-16 mb-4">
+              <div className="w-16 h-16 rounded-full border-4 border-slate-100 border-t-blue-600 animate-spin"></div>
+              <div className="absolute inset-2 w-12 h-12 rounded-full border-4 border-transparent border-b-indigo-500 animate-spin [animation-direction:reverse]"></div>
+            </div>
+            <p className="text-slate-800 font-bold text-lg mb-1">Please Wait</p>
+            <p className="text-slate-500 text-sm text-center font-medium animate-pulse">{loadingMsg}</p>
+          </div>
+        </div>
+      )}
       {previewFile && (<DocPreviewModal fileType={previewFile.fileType} fileName={previewFile.fileName} fileUrl={previewFile.fileUrl} canApprove={previewFile.canApprove} onClose={() => setPreviewFile(null)} onApprove={handleApproveFromPreview} orderData={previewFile.orderData} />)}
       {deleteConfirmId && (<ConfirmModal title="Delete Order?" message="This action cannot be undone. Are you sure?" onConfirm={confirmDeleteOrder} onCancel={() => setDeleteConfirmId(null)} />)}
+      {deleteDieselConfirm && (<ConfirmModal title="Delete Diesel Entry?" message="This action cannot be undone. Are you sure?" onConfirm={confirmDeleteDieselEntry} onCancel={() => setDeleteDieselConfirm(null)} />)}
       {showImportModal && (<ImportModal onClose={() => setShowImportModal(false)} onImport={handleBulkImport} />)}
       {dispatchOrderObj && (<DispatchModal order={dispatchOrderObj} onClose={() => setDispatchModalOrderId(null)} onSubmit={handleDispatchSubmit} logs={logs} />)}
       {mtcModalOrderId && (
@@ -1210,6 +1230,7 @@ export default function App() {
           orderId={mtcModalOrderId}
           onClose={() => setMtcModalOrderId(null)}
           onGenerate={async (orderId, testData) => {
+            setLoadingMsg('Generating Material Testing Certificate...');
             try {
               const updated = await generateMtc(orderId, testData);
               setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
@@ -1219,6 +1240,8 @@ export default function App() {
               console.error('Generate MTC failed', err);
               showToast(err?.message || 'Failed to generate MTC');
               throw err;
+            } finally {
+              setLoadingMsg(null);
             }
           }}
         />
@@ -1270,9 +1293,7 @@ export default function App() {
             updateFinishedStock={updateFinishedStock}
             updateMortarBag={updateMortarBag}
             updateProductionSummary={updateProductionSummary}
-            onResetStock={handleResetProductionStock}
             FINISHED_STOCK_SIZES={FINISHED_STOCK_SIZES}
-            canResetStock={role === 'management'}
             readOnly={['sales', 'accounts'].includes(role)}
           />
         )}
@@ -1307,6 +1328,14 @@ export default function App() {
             handleManualDieselSubmit={handleManualDieselSubmit}
             manualDieselForm={manualDieselForm}
             setManualDieselForm={setManualDieselForm}
+            handleDieselIntakeSubmit={handleDieselIntakeSubmit}
+            dieselIntakeForm={dieselIntakeForm}
+            setDieselIntakeForm={setDieselIntakeForm}
+            dieselViewDate={dieselViewDate}
+            setDieselViewDate={setDieselViewDate}
+            getTodayString={getTodayString}
+            setView={setView}
+            onDeleteEntry={triggerDeleteDieselEntry}
           />
         )}
 
@@ -1350,3 +1379,5 @@ export default function App() {
     </div>
   );
 }
+
+

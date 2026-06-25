@@ -46,9 +46,15 @@ export const RAW_MATERIALS_LIST = [
   { desc: 'SOLUBLE OIL', unit: 'Ltr' },
   { desc: 'MOULD OIL', unit: 'Ltr' },
   { desc: 'HARDENER', unit: 'KG' },
+  { desc: 'SODIUM DICHROMATE', unit: 'KG' },
   { desc: 'CHARCOAL', unit: 'KG' },
   { desc: 'SALT', unit: 'KG' },
   { desc: 'COAL', unit: 'Ton' },
 ];
 
 export const FINISHED_STOCK_SIZES = [...SIZES];
+
+export const DIESEL_ENTRY_TYPES = {
+  INFLOW: 'Inflow',
+  USAGE: 'Usage',
+};

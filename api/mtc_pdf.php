@@ -61,8 +61,8 @@ function generateMTCPDF(array $order, array $testData): string
     $compressiveStrength = dispatch_pdf_normalize_text($testData['compressiveStrengthResult'] ?? '-');
 
     $rows = [
-        ['1', 'Dry Density', 'Kgs/M3', '551-650', $dryDensity, 'Yes', 'IS6441(1)'],
-        ['2', 'Compressive Strength (Oven Dry)', 'N/MM2', '≥4.0', $compressiveStrength, 'Yes', 'IS6441(5)'],
+        ['1', 'Dry Density', 'Kgs/M3', $testData['requirementField1'] ?? '551-660', $dryDensity, 'Yes', 'IS6441(1)'],
+        ['2', 'Compressive Strength (Oven Dry)', 'N/MM2', $testData['requirementField2'] ?? '>=4.0', $compressiveStrength, 'Yes', 'IS6441(5)'],
     ];
 
     foreach ($rows as $rowIndex => $row) {

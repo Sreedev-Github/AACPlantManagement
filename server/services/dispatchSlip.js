@@ -10,10 +10,10 @@ import { formatInvoiceId } from '../constants.js';
 
 const ALLOWED_FORMATS = ['pdf', 'jpg'];
 const DISPATCH_SLIP_DIR = 'dispatch-slips';
-const PHP_DISPATCH_BRIDGE_PATH = path.resolve(process.cwd(), 'api', 'dispatch_pdf_cli.php');
+const PHP_DISPATCH_BRIDGE_PATH = path.resolve(globalThis.process.cwd(), 'api', 'dispatch_pdf_cli.php');
 
-const TEMPLATE_PDF_PATH = path.resolve(process.cwd(), 'api', 'public', 'letter head.pdf');
-const TEMPLATE_JPG_PATH = path.resolve(process.cwd(), 'public', 'Screenshot 2026-04-19 173145.png');
+const TEMPLATE_PDF_PATH = path.resolve(globalThis.process.cwd(), 'api', 'public', 'letter head.pdf');
+const TEMPLATE_JPG_PATH = path.resolve(globalThis.process.cwd(), 'public', 'Screenshot 2026-04-19 173145.png');
 const MM_TO_PT = 72 / 25.4;
 
 const STANDARD_ROWS = [
@@ -80,8 +80,16 @@ const formatSize = (size) => {
   const raw = String(size || '').trim();
   if (!raw) return '-';
 
-  const normalized = raw.replace(/[xX]/gu, ' X ').replace(/\s+/gu, ' ').trim();
-  return /MM$/iu.test(normalized) ? normalized.toUpperCase() : `${normalized.toUpperCase()} MM`;
+  const parts = raw.split(',').map(p => p.trim()).filter(Boolean);
+  const formatted = parts.map(part => {
+    const normalized = part.replace(/[xX]/gu, ' X ').replace(/\s+/gu, ' ').trim();
+    if (!/MM$/iu.test(normalized)) {
+      return `${normalized.toUpperCase()} MM`;
+    }
+    return normalized.toUpperCase();
+  });
+
+  return formatted.length > 0 ? formatted.join(', ') : '-';
 };
 
 const formatTruckType = (value) => {
@@ -89,25 +97,144 @@ const formatTruckType = (value) => {
   return digits ? `${digits} W` : '';
 };
 
-const buildSlipValues = (order) => ({
-  dateInvoiceId: `${formatDate(order.orderDate)} / ${toUpperDisplay(formatInvoiceId(order.invoiceId || order.invoiceNumber, order.orderDate))}`,
-  consignee: toUpperDisplay(order.consignee || order.client),
-  address: toUpperDisplay(order.address || order.location),
-  vehicleAndType: toUpperDisplay(`${order.vehicle || '-'}${formatTruckType(order.truckType || order.vehicleType) ? ` / ${formatTruckType(order.truckType || order.vehicleType)}` : ''}`),
-  driverName: toUpperDisplay(order.driverName),
-  mobileNumber: toUpperDisplay(order.driverContact),
-  transporterName: toUpperDisplay(order.transporter),
-  size: formatSize(order.size),
-  piecesLoaded: hasValue(order.piecesLoaded) ? `${formatNumber(order.piecesLoaded, 0)} PCS` : '-',
-  cbm: hasValue(order.cbm) ? `${formatNumber(order.cbm, 3, true)} CBM` : '-',
-  loadStartTime: toUpperDisplay(order.loadStartTime),
-  loadFinishTime: toUpperDisplay(order.loadFinishTime),
-  loading: toUpperDisplay(order.loadingBy),
-  grossWeight: formatNumber(order.grossWeight, 3),
-  tareWeight: formatNumber(order.tareWeight, 3),
-  netWeight: formatNumber(order.netWt, 3),
-  contactPerson: toUpperDisplay(order.contactPerson),
-});
+const formatDispatchVolume = (cbm, bjm) => {
+  const cbmText = hasValue(cbm) ? formatNumber(cbm, 3, true) : '-';
+  const bjmText = hasValue(bjm) ? `${formatNumber(bjm, 3, true)} BJM` : '';
+
+  if (!hasValue(cbm) || cbmText === '-') {
+    return bjmText || '-';
+  }
+
+  return bjmText ? `${cbmText}, ${bjmText}` : cbmText;
+};
+
+const getSizeVolume = (size) => {
+  const parts = String(size || '')
+    .toLowerCase()
+    .match(/\d+(?:\.\d+)?/gu)
+    ?.slice(0, 3)
+    .map((item) => Number(item));
+
+  if (!parts || parts.length !== 3 || parts.some((item) => !Number.isFinite(item) || item <= 0)) return null;
+
+  const [lengthMm, widthMm, heightMm] = parts;
+  return (lengthMm / 1000) * (widthMm / 1000) * (heightMm / 1000);
+};
+
+const derivePiecesLoaded = (cbm, size) => {
+  const cbmValue = parseFloat(cbm);
+  const volume = getSizeVolume(size);
+  if (!Number.isFinite(cbmValue) || cbmValue <= 0 || !Number.isFinite(volume) || volume <= 0) return 0;
+  return Math.max(0, Math.round(cbmValue / volume));
+};
+
+const buildSlipValues = (order) => {
+  let sizesList = [];
+  let cbmsList = [];
+  let piecesList = [];
+
+  const isDispatched = order.status === 'Dispatched' || hasValue(order.dispatchSlip);
+
+  if (isDispatched) {
+    const rawSizes = String(order.size || '').split(',').map(s => s.trim()).filter(Boolean);
+    const additional = Array.isArray(order.additionalProducts) ? order.additionalProducts : [];
+    
+    const totalCbm = parseFloat(order.cbm) || 0;
+    const totalPieces = parseInt(order.piecesLoaded, 10) || 0;
+    
+    let additionalCbmSum = 0;
+    let additionalPiecesSum = 0;
+    
+    const additionalItems = additional.map((p) => {
+      const pCbm = parseFloat(p.cbm) || 0;
+      const pSize = p.size || '';
+      const pPieces = derivePiecesLoaded(pCbm, pSize);
+      
+      additionalCbmSum += pCbm;
+      additionalPiecesSum += pPieces;
+      
+      return { cbm: pCbm, pieces: pPieces };
+    });
+    
+    const primaryCbm = Math.max(0, totalCbm - additionalCbmSum);
+    const primaryPieces = Math.max(0, totalPieces - additionalPiecesSum);
+    
+    rawSizes.forEach((sz, idx) => {
+      sizesList.push(sz);
+      if (idx === 0) {
+        cbmsList.push(primaryCbm);
+        piecesList.push(primaryPieces);
+      } else {
+        const addIndex = idx - 1;
+        const addCbm = additionalItems[addIndex] ? additionalItems[addIndex].cbm : 0;
+        const addPieces = additionalItems[addIndex] ? additionalItems[addIndex].pieces : 0;
+        cbmsList.push(addCbm);
+        piecesList.push(addPieces);
+      }
+    });
+  } else {
+    if (order.size) {
+      sizesList.push(order.size);
+      cbmsList.push(parseFloat(order.cbm) || 0);
+      piecesList.push(parseInt(order.piecesLoaded, 10) || derivePiecesLoaded(order.cbm, order.size));
+    }
+
+    if (Array.isArray(order.sizes)) {
+      order.sizes.forEach((s) => {
+        if (s && typeof s === 'object') {
+          if (s.size) {
+            sizesList.push(s.size);
+            cbmsList.push(parseFloat(s.cbm) || 0);
+            piecesList.push(derivePiecesLoaded(s.cbm, s.size));
+          }
+        } else if (s) {
+          sizesList.push(s);
+          cbmsList.push(0);
+          piecesList.push(0);
+        }
+      });
+    }
+
+    if (Array.isArray(order.additionalProducts)) {
+      order.additionalProducts.forEach((p) => {
+        if (p && p.size) {
+          sizesList.push(p.size);
+          cbmsList.push(parseFloat(p.cbm) || 0);
+          piecesList.push(derivePiecesLoaded(p.cbm, p.size));
+        }
+      });
+    }
+  }
+
+  const formattedSizes = formatSize(sizesList.join(', '));
+  
+  const formattedPieces = piecesList.length > 0 
+    ? piecesList.map(p => `${formatNumber(p, 0)} PCS`).join(', ')
+    : '-';
+    
+  const cbmValuesText = cbmsList.map(c => formatNumber(c, 3, true)).join(', ');
+  const formattedCbm = formatDispatchVolume(cbmValuesText, order.bjm);
+
+  return {
+    dateInvoiceId: `${formatDate(order.orderDate)} / ${toUpperDisplay(formatInvoiceId(order.invoiceId || order.invoiceNumber, order.orderDate))}`,
+    consignee: toUpperDisplay(order.consignee || order.client),
+    address: toUpperDisplay(order.address || order.location),
+    vehicleAndType: toUpperDisplay(`${order.vehicle || '-'}${formatTruckType(order.truckType || order.vehicleType) ? ` / ${formatTruckType(order.truckType || order.vehicleType)}` : ''}`),
+    driverName: toUpperDisplay(order.driverName),
+    mobileNumber: toUpperDisplay(order.driverContact),
+    transporterName: toUpperDisplay(order.transporter),
+    size: formattedSizes,
+    piecesLoaded: formattedPieces,
+    cbm: formattedCbm,
+    loadStartTime: toUpperDisplay(order.loadStartTime),
+    loadFinishTime: toUpperDisplay(order.loadFinishTime),
+    loading: toUpperDisplay(order.loadingBy),
+    grossWeight: formatNumber(order.grossWeight, 3),
+    tareWeight: formatNumber(order.tareWeight, 3),
+    netWeight: formatNumber(order.netWt, 3),
+    contactPerson: toUpperDisplay(order.contactPerson),
+  };
+};
 
 const resolveDispatchSlipLayout = (pageWidth, pageHeight) => {
   const tableLeft = pageWidth * 0.12;
@@ -147,8 +274,8 @@ const resolveDispatchSlipLayout = (pageWidth, pageHeight) => {
 const resolveDispatchSlipTemplatePath = () => {
   const candidates = [
     TEMPLATE_PDF_PATH,
-    path.resolve(process.cwd(), 'public', 'letter head.pdf'),
-    path.resolve(process.cwd(), 'letter head.pdf'),
+    path.resolve(globalThis.process.cwd(), 'public', 'letter head.pdf'),
+    path.resolve(globalThis.process.cwd(), 'letter head.pdf'),
   ];
 
   return candidates.find((candidate) => fs.existsSync(candidate)) || TEMPLATE_PDF_PATH;
@@ -161,7 +288,7 @@ const renderDispatchSlipPdfViaPhp = async (order) => {
     return null;
   }
 
-  const phpBinary = process.env.PHP_BINARY || 'php';
+  const phpBinary = (globalThis.process && globalThis.process.env && globalThis.process.env.PHP_BINARY) || 'php';
   const result = spawnSync(phpBinary, [PHP_DISPATCH_BRIDGE_PATH], {
     input: JSON.stringify(order),
     maxBuffer: 20 * 1024 * 1024,
@@ -176,7 +303,7 @@ const renderDispatchSlipPdfViaPhp = async (order) => {
     throw new Error(stderr || `PHP dispatch bridge exited with status ${result.status}.`);
   }
 
-  return Buffer.from(result.stdout);
+  return globalThis.Buffer.from(result.stdout);
 };
 
 const fitTextPdf = (font, text, fontSize, maxWidth) => {
@@ -191,63 +318,6 @@ const fitTextPdf = (font, text, fontSize, maxWidth) => {
   }
 
   return `${truncated}...`;
-};
-
-const drawTextInCellPdf = ({
-  page,
-  font,
-  text,
-  size,
-  x,
-  y,
-  width,
-  height,
-  align = 'left',
-  padding = 8,
-  xOffset = 0,
-}) => {
-  const fitted = fitTextPdf(font, text, size, Math.max(width - (padding * 2), 10));
-  const textWidth = font.widthOfTextAtSize(fitted, size);
-
-  let drawX = x + padding;
-  if (align === 'center') {
-    drawX = x + ((width - textWidth) / 2);
-  } else if (align === 'right') {
-    drawX = x + width - padding - textWidth;
-  }
-  drawX += xOffset;
-
-  const drawY = page.getHeight() - y - ((height + size) / 2) + 2;
-  page.drawText(fitted, {
-    x: drawX,
-    y: drawY,
-    size,
-    font,
-    color: BLACK,
-  });
-};
-
-const drawLinePdf = (page, x1, y1, x2, y2, thickness = 0.8) => {
-  page.drawLine({
-    start: { x: x1, y: page.getHeight() - y1 },
-    end: { x: x2, y: page.getHeight() - y2 },
-    thickness,
-    color: BLACK,
-  });
-};
-
-const getAlignedTextBoundsPdf = ({ font, text, size, x, width, align = 'left', padding = 0 }) => {
-  const fitted = fitTextPdf(font, text, size, Math.max(width - (padding * 2), 10));
-  const textWidth = font.widthOfTextAtSize(fitted, size);
-
-  let startX = x + padding;
-  if (align === 'center') {
-    startX = x + ((width - textWidth) / 2);
-  } else if (align === 'right') {
-    startX = x + width - padding - textWidth;
-  }
-
-  return { startX, endX: startX + textWidth };
 };
 
 const drawDispatchSlipBodyPdf = (page, fonts, values) => {
@@ -762,7 +832,7 @@ const renderDispatchSlipPdf = async (order) => {
   drawDispatchSlipBodyPdf(page, { regular, bold }, buildSlipValues(order));
 
   const outputBytes = await pdfDoc.save();
-  return Buffer.from(outputBytes);
+  return globalThis.Buffer.from(outputBytes);
 };
 
 const renderDispatchSlipJpg = async (order) => {
@@ -776,7 +846,7 @@ const renderDispatchSlipJpg = async (order) => {
   const overlaySvg = buildDispatchSlipOverlaySvg(width, height, buildSlipValues(order));
 
   return sharp(TEMPLATE_JPG_PATH)
-    .composite([{ input: Buffer.from(overlaySvg) }])
+    .composite([{ input: globalThis.Buffer.from(overlaySvg) }])
     .jpeg({ quality: 94 })
     .toBuffer();
 };

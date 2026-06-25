@@ -216,16 +216,16 @@ const buildDispatchPayload = (order, payload) => {
   merged.tareWeight = normalizeWeight(merged.tareWeight);
   merged.netWt = normalizeWeight(merged.netWt);
 
-  merged.consignee = merged.consignee || trimIfPresent(order.client) || 'N/A';
-  merged.address = merged.address || trimIfPresent(order.location) || 'N/A';
-  merged.vehicle = merged.vehicle || 'N/A';
-  merged.transporter = merged.transporter || 'N/A';
-  merged.driverName = merged.driverName || 'N/A';
-  merged.loadStartTime = merged.loadStartTime || 'N/A';
-  merged.loadFinishTime = merged.loadFinishTime || 'N/A';
-  merged.loadingBy = merged.loadingBy || 'N/A';
+  merged.consignee = merged.consignee || trimIfPresent(order.client);
+  merged.address = merged.address || trimIfPresent(order.location);
+  merged.vehicle = merged.vehicle;
+  merged.transporter = merged.transporter;
+  merged.driverName = merged.driverName;
+  merged.loadStartTime = merged.loadStartTime;
+  merged.loadFinishTime = merged.loadFinishTime;
+  merged.loadingBy = merged.loadingBy;
 
-  if (String(merged.transporter || '').toUpperCase() === 'ABC') {
+  if (String(merged.transporter || '').trim().toUpperCase().startsWith('ABC')) {
     merged.tripKm = Number.isFinite(merged.tripKm) ? merged.tripKm : 0;
     merged.hsd = Number.isFinite(merged.hsd) ? merged.hsd : 0;
   }
@@ -264,7 +264,7 @@ const getPublicBaseUrl = (req) => {
 
 const normalizeOrderResponse = (req, doc) => normalizeOrderDoc(doc, { baseUrl: getPublicBaseUrl(req) });
 
-router.use('/orders', authenticateOrGuest);
+router.use('/orders', requireAuth);
 
 router.get('/orders', async (req, res, next) => {
   try {
@@ -304,7 +304,7 @@ router.get('/orders/:id/events', async (req, res, next) => {
   }
 });
 
-router.post('/orders', requireRoles(ROLES.SALES, ROLES.MANAGEMENT), async (req, res, next) => {
+router.post('/orders', requireRoles(ROLES.SALES, ROLES.LOADING, ROLES.MANAGEMENT), async (req, res, next) => {
   try {
     const payload = req.body || {};
     validateOrderDraft(payload);
@@ -659,17 +659,40 @@ const handleGenerateMtc = async (req, res, next) => {
 
     const dryDensityResult = String(req.body?.dryDensityResult || '').trim();
     const compressiveStrengthResult = String(req.body?.compressiveStrengthResult || '').trim();
+    const requirementField1 = String(req.body?.requirementField1 || '').trim();
+    const requirementField2 = String(req.body?.requirementField2 || '').trim();
+    const issueDate = String(req.body?.issueDate || '').trim();
+    const testingDate = String(req.body?.testingDate || '').trim();
 
-    if (!dryDensityResult || !compressiveStrengthResult) {
-      throw httpError(400, 'Dry Density Result and Compressive Strength Result are required.');
+    // Validate presence of all required fields
+    const missing = [];
+    if (!issueDate) missing.push('Date of Issue');
+    if (!testingDate) missing.push('Date of Testing');
+    if (!requirementField1) missing.push('Requirement Field 1');
+    if (!requirementField2) missing.push('Requirement Field 2');
+    if (!dryDensityResult) missing.push('Dry Density Result');
+    if (!compressiveStrengthResult) missing.push('Compressive Strength Result');
+
+    if (missing.length > 0) {
+      throw httpError(400, `Missing required fields: ${missing.join(', ')}`);
     }
 
+    // Numeric validation
     if (Number.isNaN(Number(dryDensityResult))) {
       throw httpError(400, 'Dry Density Result must be a number.');
     }
 
     if (Number.isNaN(Number(compressiveStrengthResult))) {
       throw httpError(400, 'Compressive Strength Result must be a number.');
+    }
+
+    // Basic date format validation (expect dd-mm-yyyy)
+    const dateRe = /^\d{2}-\d{2}-\d{4}$/;
+    if (!dateRe.test(issueDate)) {
+      throw httpError(400, 'Date of Issue must be in dd-mm-yyyy format.');
+    }
+    if (!dateRe.test(testingDate)) {
+      throw httpError(400, 'Date of Testing must be in dd-mm-yyyy format.');
     }
 
     const actor = actorFromReq(req);
@@ -683,6 +706,10 @@ const handleGenerateMtc = async (req, res, next) => {
       testData: {
         dryDensityResult,
         compressiveStrengthResult,
+        requirementField1,
+        requirementField2,
+        issueDate,
+        testingDate,
       },
       uploadDir: config.uploadDir,
     });
@@ -765,6 +792,7 @@ router.post('/orders/:id/dispatch', requireRoles(ROLES.LOADING, ROLES.MANAGEMENT
       order: {
         ...order,
         ...payload,
+        status: ORDER_STATUSES.DISPATCHED,
         id: order._id.toString(),
       },
       format: slipFormat,

@@ -51,7 +51,7 @@ export const validateDispatchPayload = (payload) => {
     }
   }
 
-  const isABC = String(payload.transporter || '').toUpperCase() === 'ABC';
+  const isABC = String(payload.transporter || '').trim().toUpperCase().startsWith('ABC');
 
   if (isABC) {
     for (const field of ABC_DISPATCH_REQUIRED_FIELDS) {

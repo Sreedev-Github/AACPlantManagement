@@ -8,6 +8,7 @@ import {
   Calendar,
   CheckCircle,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   ClipboardList,
   DollarSign,
@@ -21,7 +22,6 @@ import {
   LayoutGrid,
   Layers,
   LogOut,
-  Package,
   Pencil,
   Plus,
   ScrollText,
@@ -34,24 +34,28 @@ import {
   Briefcase,
 } from 'lucide-react';
 import { Card, EditableCell, InputGroup, StatCard, StatusBadge } from '../ui/AppUI';
-import { convertPiecesToCbm, formatTruckTypeShort, getVolumePerPieceFromSize } from '../../utils/appHelpers';
+import { convertPiecesToCbm, formatTruckTypeShort, getVolumePerPieceFromSize, formatDateDisplay } from '../../utils/appHelpers';
 
-export const RoleSelectionView = ({ setRole }) => (
-  <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-    <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 space-y-6">
-      <div className="text-center"><div className="bg-blue-600 w-16 h-16 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-blue-200 shadow-xl"><Package className="text-white w-8 h-8" /></div><h1 className="text-2xl font-bold text-slate-900">AAC Plant Manager</h1><p className="text-slate-500 mt-2">Select your department</p></div>
-      <div className="grid gap-3">
-        <button onClick={() => setRole('sales')} className="flex items-center p-4 border-2 border-slate-100 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"><div className="bg-blue-100 p-2 rounded-lg"><Briefcase className="text-blue-600 w-5 h-5" /></div><div className="ml-4 text-left"><p className="font-bold text-slate-700">Sales Team</p></div></button>
-        <button onClick={() => setRole('loading')} className="flex items-center p-4 border-2 border-slate-100 rounded-xl hover:border-orange-500 hover:bg-orange-50 transition-all group"><div className="bg-orange-100 p-2 rounded-lg"><Truck className="text-orange-600 w-5 h-5" /></div><div className="ml-4 text-left"><p className="font-bold text-slate-700">Loading Team</p></div></button>
-        <button onClick={() => setRole('production')} className="flex items-center p-4 border-2 border-slate-100 rounded-xl hover:border-cyan-500 hover:bg-cyan-50 transition-all group"><div className="bg-cyan-100 p-2 rounded-lg"><Factory className="text-cyan-600 w-5 h-5" /></div><div className="ml-4 text-left"><p className="font-bold text-slate-700">Production Team</p></div></button>
-        <button onClick={() => setRole('accounts')} className="flex items-center p-4 border-2 border-slate-100 rounded-xl hover:border-green-500 hover:bg-green-50 transition-all group"><div className="bg-green-100 p-2 rounded-lg"><DollarSign className="text-green-600 w-5 h-5" /></div><div className="ml-4 text-left"><p className="font-bold text-slate-700">Accounts</p></div></button>
-        <button onClick={() => setRole('management')} className="flex items-center p-4 border-2 border-slate-100 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all group"><div className="bg-purple-100 p-2 rounded-lg"><BarChart3 className="text-purple-600 w-5 h-5" /></div><div className="ml-4 text-left"><p className="font-bold text-slate-700">Management</p></div></button>
-      </div>
-    </div>
-  </div>
+const BRAND_LOGO_SRC = '/abc_logo.png';
+
+const formatDieselMetric = (value) => {
+  if (value === null || value === undefined || value === '') return '-';
+  const num = parseFloat(value);
+  if (Number.isNaN(num)) return '-';
+  return Number(num.toFixed(2)).toString();
+};
+
+
+const BrandLogo = ({ className = 'h-10 w-10', imageClassName = '' }) => (
+  <img
+    src={BRAND_LOGO_SRC}
+    alt="ABC Ashpro"
+    className={`${className} object-contain ${imageClassName}`.trim()}
+    draggable="false"
+  />
 );
 
-export const LoginView = ({ onLogin, loading, error, demoUsers }) => {
+export const LoginView = ({ onLogin, loading, error }) => {
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
 
@@ -63,7 +67,7 @@ export const LoginView = ({ onLogin, loading, error, demoUsers }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 space-y-6 border border-slate-200">
-        <div className="text-center"><div className="bg-blue-600 w-16 h-16 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-blue-200 shadow-xl"><Package className="text-white w-8 h-8" /></div><h1 className="text-2xl font-bold text-slate-900">AAC Plant Manager</h1><p className="text-slate-500 mt-2">Sign in to continue</p></div>
+        <div className="text-center"><div className="bg-white w-16 h-16 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-slate-200 shadow-xl p-2 border border-slate-100"><BrandLogo className="h-full w-full" /></div><h1 className="text-2xl font-bold text-slate-900">ABC ASHPRO</h1><p className="text-slate-500 mt-2">Sign in to continue</p></div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Username</label>
@@ -76,10 +80,142 @@ export const LoginView = ({ onLogin, loading, error, demoUsers }) => {
           {error && <p className="text-sm text-red-600 bg-red-50 border border-red-100 p-2 rounded-lg">{error}</p>}
           <button type="submit" disabled={loading} className="w-full py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60">{loading ? 'Signing in...' : 'Login'}</button>
         </form>
-        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600">
-          <p className="font-bold text-slate-700 mb-1">Temporary Logins</p>
-          {demoUsers.map((item) => <p key={item.username}>{item.role}: {item.username} / {item.password}</p>)}
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 space-y-1">
+          <p className="font-bold text-slate-700">Team access</p>
+          <p>Use your team username and the shared password.</p>
+          <p>Roles: sale, loading, account, production, management.</p>
         </div>
+      </div>
+    </div>
+  );
+};
+
+export const ManagementAccessView = ({ teamUsers, currentUser, onSaveUser, onRefreshUsers, loading }) => {
+  const [selectedUserId, setSelectedUserId] = React.useState('');
+  const [username, setUsername] = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [currentPassword, setCurrentPassword] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const tempUserPattern = /^(?:smoke|diag|debug)_loading_\d+$/i;
+
+  const visibleUsers = React.useMemo(
+    () => teamUsers.filter((item) => {
+      const role = String(item.role || '').toLowerCase();
+      const usernameValue = String(item.username || '').trim().toLowerCase();
+      return ['sale', 'loading', 'account', 'production'].includes(role) && !tempUserPattern.test(usernameValue);
+    }),
+    [teamUsers],
+  );
+
+  const selectedUser = React.useMemo(
+    () => visibleUsers.find((item) => String(item.id) === String(selectedUserId)) || null,
+    [selectedUserId, visibleUsers],
+  );
+
+  React.useEffect(() => {
+    if (!selectedUser && visibleUsers.length > 0) {
+      setSelectedUserId(String(visibleUsers[0].id));
+      return;
+    }
+
+    if (selectedUser) {
+      setUsername(selectedUser.username || '');
+      setPassword('');
+      setCurrentPassword('');
+    }
+  }, [selectedUser, visibleUsers]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedUser) return;
+
+    setSaving(true);
+    try {
+      await onSaveUser(selectedUser.id, {
+        username: username.trim().toLowerCase(),
+        password,
+        currentPassword,
+      });
+      await onRefreshUsers(currentUser?.role || 'management');
+      setPassword('');
+      setCurrentPassword('');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <div>
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-purple-600" /> Management Access</h2>
+          <p className="text-xs text-slate-400">Update team usernames and passwords.</p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <Card className="p-4 border border-slate-200 bg-white">
+          <div className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">Team Users</div>
+          <div className="space-y-2">
+            {loading ? (
+              <div className="text-sm text-slate-500">Loading users...</div>
+            ) : visibleUsers.length === 0 ? (
+              <div className="text-sm text-slate-500">No editable users found.</div>
+            ) : visibleUsers.map((user) => (
+              <button
+                key={user.id}
+                type="button"
+                onClick={() => setSelectedUserId(String(user.id))}
+                className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${String(selectedUserId) === String(user.id) ? 'border-purple-200 bg-purple-50' : 'border-slate-200 hover:bg-slate-50'}`}
+              >
+                <div className="font-semibold text-slate-900">{user.username}</div>
+                <div className="text-xs uppercase tracking-wider text-slate-400">{user.role}</div>
+              </button>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-4 border border-slate-200 bg-white">
+          <div className="mb-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Selected User</div>
+            <h3 className="mt-1 text-xl font-bold text-slate-900">{selectedUser ? selectedUser.username : 'No user selected'}</h3>
+          </div>
+
+          <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
+            <InputGroup label="Username">
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-purple-500"
+              />
+            </InputGroup>
+            <InputGroup label="New Password">
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-purple-500"
+              />
+            </InputGroup>
+            <InputGroup label="Current Password">
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-purple-500"
+              />
+            </InputGroup>
+            <div className="flex items-end">
+              <button
+                type="submit"
+                disabled={!selectedUser || saving}
+                className="w-full rounded-lg bg-purple-600 px-4 py-2.5 font-bold text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </Card>
       </div>
     </div>
   );
@@ -99,13 +235,13 @@ export const AppHeader = ({
   SIZES,
 }) => (
   <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-    <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+    <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
       <div className="flex items-center space-x-2 cursor-pointer shrink-0" onClick={() => setViewAndFilter('home', 'date')}>
-        <div className="bg-blue-600 p-1.5 rounded-lg"><Package className="text-white w-4 h-4" /></div><span className="font-bold text-slate-800 hidden md:block">AAC Manager</span><span className="px-2 py-0.5 rounded bg-slate-100 text-slate-500 text-xs font-medium uppercase border border-slate-200">{role}</span>
+        <div className="bg-white p-1.5 rounded-lg shadow-sm border border-slate-100"><BrandLogo className="h-5 w-5" /></div><span className="font-bold text-slate-800 hidden md:block">AAC Manager</span><span className="px-2 py-0.5 rounded bg-slate-100 text-slate-500 text-xs font-medium uppercase border border-slate-200">{role}</span>
       </div>
       <div className="flex-1"></div>
       <div className="flex items-center space-x-2 shrink-0">
-        {['sales', 'management'].includes(role) && view === 'daily-log' && filterMode === 'date' && (role === 'management' || viewDate >= getTodayString()) && (<button onClick={() => { setEditingOrderId(null); setFormData({ invoiceId: '', client: '', location: '', gstin: '', vehicle: '', vehicleType: '', transporter: '', size: SIZES[3], quantityUnit: 'CBM', quantityValue: '', cbm: '', bjm: '', rate: '', bjmRate: '', aacRateManualOverride: false, bjmRateManualOverride: false, additionalProducts: [] }); setView('new-order'); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center shadow-sm whitespace-nowrap"><Plus className="w-4 h-4 md:mr-1.5" /> <span className="hidden md:inline">New Order</span></button>)}
+        {['sale', 'management', 'loading'].includes(role) && view === 'daily-log' && filterMode === 'date' && (role === 'management' || role === 'loading' || viewDate >= getTodayString()) && (<button onClick={() => { setEditingOrderId(null); setFormData({ invoiceId: '', client: '', location: '', gstin: '', vehicle: '', vehicleType: '', transporter: '', size: SIZES[3], quantityUnit: 'CBM', quantityValue: '', cbm: '', bjm: '', rate: '', bjmRate: '', aacRateManualOverride: false, bjmRateManualOverride: false, additionalProducts: [] }); setView('new-order'); }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center shadow-sm whitespace-nowrap"><Plus className="w-4 h-4 md:mr-1.5" /> <span className="hidden md:inline">New Order</span></button>)}
         <button onClick={onLogout} className="text-slate-400 hover:text-red-500 p-2"><LogOut className="w-5 h-5" /></button>
       </div>
     </div>
@@ -115,7 +251,7 @@ export const AppHeader = ({
 export const HomeView = ({ role, stats, setViewAndFilter, getTodayString, setView, setProductionTab, setViewDate, setEditingOrderId, setFormData, setFilterMode, SIZES }) => (
   <div className="space-y-8 animate-in fade-in duration-500">
     <div><h2 className="text-2xl font-bold text-slate-800">Welcome back, {String(role || 'user').toUpperCase()}</h2><p className="text-slate-500">Activity Overview</p></div>
-    {role === 'sales' && (
+    {role === 'sale' && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard onClick={() => setViewAndFilter('daily-log', 'date', getTodayString())} label="Today's Orders" value={stats.todayOrders} icon={Calendar} colorClass="bg-blue-500" />
         <StatCard onClick={() => setViewAndFilter('daily-log', 'active')} label="Active Loads" value={stats.active} icon={Truck} colorClass="bg-orange-500" />
@@ -130,7 +266,7 @@ export const HomeView = ({ role, stats, setViewAndFilter, getTodayString, setVie
         <StatCard onClick={() => setViewAndFilter('daily-log', 'backlog')} label="Backlog" value={stats.backlog} icon={AlertTriangle} colorClass="bg-red-500" />
       </div>
     )}
-    {role === 'accounts' && (
+    {role === 'account' && (
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard onClick={() => setViewAndFilter('daily-log', 'date', getTodayString())} label="Today's Orders" value={stats.todayOrders} icon={Calendar} colorClass="bg-blue-500" />
         <StatCard onClick={() => setViewAndFilter('daily-log', 'pending_invoice')} label="Pending Invoices" value={stats.pendingInv} icon={FileText} colorClass="bg-red-500" />
@@ -155,19 +291,27 @@ export const HomeView = ({ role, stats, setViewAndFilter, getTodayString, setVie
           <Card onClick={() => setView('diesel-register')} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><Fuel className="w-5 h-5 text-orange-600 mr-2" /><span className="font-bold text-lg">Diesel Register</span></div><p className="text-sm text-slate-500">Track HSD usage.</p></div><ArrowRight className="text-slate-300 group-hover:text-orange-600" /></Card>
           <Card onClick={() => setView('loading-report')} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><ClipboardList className="w-5 h-5 text-blue-600 mr-2" /><span className="font-bold text-lg">Labor Report</span></div><p className="text-sm text-slate-500">Rates & remarks.</p></div><ArrowRight className="text-slate-300 group-hover:text-blue-600" /></Card>
           <Card onClick={() => setView('detailed-sales-report')} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><FileSpreadsheet className="w-5 h-5 text-green-600 mr-2" /><span className="font-bold text-lg">Sales Report</span></div><p className="text-sm text-slate-500">Full details with Bill Amt.</p></div><ArrowRight className="text-slate-300 group-hover:text-green-600" /></Card>
+          <Card onClick={() => setView('password-management')} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><ShieldCheck className="w-5 h-5 text-purple-600 mr-2" /><span className="font-bold text-lg">Password Management</span></div><p className="text-sm text-slate-500">Update team account credentials.</p></div><ArrowRight className="text-slate-300 group-hover:text-purple-600" /></Card>
           <Card onClick={() => setView('system-logs')} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><ScrollText className="w-5 h-5 text-slate-600 mr-2" /><span className="font-bold text-lg">System Logs</span></div><p className="text-sm text-slate-500">Audit trail of changes.</p></div><ArrowRight className="text-slate-300 group-hover:text-slate-600" /></Card>
         </div>
       </>
     )}
-    {role === 'sales' && (
+    {role === 'sale' && (
       <div className="grid md:grid-cols-3 gap-4 mt-8">
         <Card onClick={() => setViewAndFilter('daily-log', 'date', getTodayString())} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><LayoutGrid className="w-5 h-5 text-blue-600 mr-2" /><span className="font-bold text-lg">Daily Loading Plan</span></div><p className="text-sm text-slate-500">Manage schedules & invoices.</p></div><ArrowRight className="text-slate-300 group-hover:text-blue-600" /></Card>
         <Card onClick={() => { setViewDate(getTodayString()); setFilterMode('date'); setEditingOrderId(null); setFormData({ invoiceId: '', client: '', location: '', gstin: '', vehicle: '', vehicleType: '', transporter: '', size: SIZES[3], quantityUnit: 'CBM', quantityValue: '', cbm: '', bjm: '', rate: '', bjmRate: '', aacRateManualOverride: false, bjmRateManualOverride: false, additionalProducts: [] }); setView('new-order'); }} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><Plus className="w-5 h-5 text-green-600 mr-2" /><span className="font-bold text-lg">Create New Order</span></div><p className="text-sm text-slate-500">Add loading requirement.</p></div><ArrowRight className="text-slate-300 group-hover:text-green-600" /></Card>
         <Card onClick={() => { setView('production-dashboard'); setProductionTab('finished-stock'); }} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><Boxes className="w-5 h-5 text-indigo-600 mr-2" /><span className="font-bold text-lg">Daily Production Report</span></div><p className="text-sm text-slate-500">View finished goods and daily output.</p></div><ArrowRight className="text-slate-300 group-hover:text-indigo-600" /></Card>
       </div>
     )}
-    {role === 'loading' && (<div className="grid md:grid-cols-1 gap-4 mt-8"><Card onClick={() => setViewAndFilter('daily-log', 'date', getTodayString())} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><LayoutGrid className="w-5 h-5 text-orange-600 mr-2" /><span className="font-bold text-lg">Daily Loading Log</span></div><p className="text-sm text-slate-500">Update truck status & dispatch.</p></div><ArrowRight className="text-slate-300 group-hover:text-orange-600" /></Card></div>)}
-    {role === 'accounts' && (
+    {role === 'loading' && (
+      <div className="grid md:grid-cols-4 gap-4 mt-8">
+        <Card onClick={() => setViewAndFilter('daily-log', 'date', getTodayString())} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><LayoutGrid className="w-5 h-5 text-orange-600 mr-2" /><span className="font-bold text-lg">Daily Loading Log</span></div><p className="text-sm text-slate-500">Update truck status & dispatch.</p></div><ArrowRight className="text-slate-300 group-hover:text-orange-600" /></Card>
+        <Card onClick={() => { setViewDate(getTodayString()); setFilterMode('date'); setEditingOrderId(null); setFormData({ invoiceId: '', client: '', location: '', gstin: '', vehicle: '', vehicleType: '', transporter: '', size: SIZES[3], quantityUnit: 'CBM', quantityValue: '', cbm: '', bjm: '', rate: '', bjmRate: '', aacRateManualOverride: false, bjmRateManualOverride: false, additionalProducts: [] }); setView('new-order'); }} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><Plus className="w-5 h-5 text-green-600 mr-2" /><span className="font-bold text-lg">Create New Order</span></div><p className="text-sm text-slate-500">Add loading requirement.</p></div><ArrowRight className="text-slate-300 group-hover:text-green-600" /></Card>
+        <Card onClick={() => setView('detailed-sales-report')} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><FileSpreadsheet className="w-5 h-5 text-emerald-600 mr-2" /><span className="font-bold text-lg">Sales Report</span></div><p className="text-sm text-slate-500">View billing and dispatch details.</p></div><ArrowRight className="text-slate-300 group-hover:text-emerald-600" /></Card>
+        <Card onClick={() => setView('diesel-register')} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><Fuel className="w-5 h-5 text-orange-600 mr-2" /><span className="font-bold text-lg">Diesel Register</span></div><p className="text-sm text-slate-500">Track HSD usage.</p></div><ArrowRight className="text-slate-300 group-hover:text-orange-600" /></Card>
+      </div>
+    )}
+    {role === 'account' && (
       <div className="grid md:grid-cols-2 gap-4 mt-8">
         <Card onClick={() => setViewAndFilter('daily-log', 'date', getTodayString())} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><LayoutGrid className="w-5 h-5 text-green-600 mr-2" /><span className="font-bold text-lg">Loading & Billing</span></div><p className="text-sm text-slate-500">Upload tax invoices.</p></div><ArrowRight className="text-slate-300 group-hover:text-green-600" /></Card>
         <Card onClick={() => { setView('production-dashboard'); setProductionTab('finished-stock'); }} className="p-6 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center mb-2"><Boxes className="w-5 h-5 text-indigo-600 mr-2" /><span className="font-bold text-lg">Daily Production Report</span></div><p className="text-sm text-slate-500">View finished goods and daily output.</p></div><ArrowRight className="text-slate-300 group-hover:text-indigo-600" /></Card>
@@ -190,9 +334,13 @@ export const ProductionDashboardView = ({
   updateFinishedStock,
   updateMortarBag,
   updateProductionSummary,
-  onResetStock,
   FINISHED_STOCK_SIZES,
-  canResetStock = false,
+  newFinishedSize,
+  setNewFinishedSize,
+  finishedSizeToRemove,
+  setFinishedSizeToRemove,
+  handleAddFinishedSize,
+  handleRemoveFinishedSize,
   readOnly = false,
 }) => {
   const rawData = getRawMaterialDataForDate(viewDate);
@@ -206,10 +354,7 @@ export const ProductionDashboardView = ({
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Production Log</span>
           <span className="text-lg font-bold text-slate-800 flex items-center gap-2"><Calendar className="w-4 h-4 text-blue-500" />{formatDateDisplay(viewDate)}</span>
         </div>
-        <button onClick={handleDownloadReport} className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm"><Download className="w-4 h-4 mr-1.5" /> Download Report PDF</button>
-        {canResetStock && (
-          <button onClick={onResetStock} className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm">Reset Stock</button>
-        )}
+        <button onClick={handleDownloadReport} className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm font-bold flex items-center shadow-sm"><Download className="w-4 h-4 mr-1.5" /> Download JPG</button>
         <button onClick={() => handleDateChange(1)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors"><ChevronRight className="w-5 h-5" /></button>
       </div>
 
@@ -222,33 +367,33 @@ export const ProductionDashboardView = ({
         {productionTab === 'raw-material' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
             <div className="flex flex-col justify-between items-center text-center mb-6"><span className="font-extrabold text-lg text-cyan-900 mb-1">ABC ASHPRO</span><div className="w-full max-w-sm border-b-2 border-cyan-800 mb-2"></div><h3 className="font-bold text-cyan-800 text-lg">STATUS OF RAW MATERIAL</h3></div>
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <table className="w-full table-fixed text-xs md:text-sm text-left">
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full table-fixed text-xs md:text-sm text-center">
                 <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs">
                   <tr>
                     <th className="px-2 py-3 text-center w-[6%]">Sr</th>
-                    <th className="px-2 py-3 text-left w-[22%]">Description</th>
+                    <th className="px-2 py-3 text-center w-[28%]">Description</th>
                     <th className="px-2 py-3 text-center w-[9%]">Unit</th>
                     <th className="px-2 py-3 text-right w-[10%] bg-blue-50/50">Opening</th>
                     <th className="px-2 py-3 text-right w-[10%] bg-blue-50/50">Receipt</th>
                     <th className="px-2 py-3 text-right w-[10%] font-extrabold bg-blue-100/50">Total</th>
                     <th className="px-2 py-3 text-right w-[10%] bg-orange-50/50">Issue</th>
                     <th className="px-2 py-3 text-right w-[10%] font-extrabold bg-green-100/50">Closing</th>
-                    <th className="px-2 py-3 text-left w-[13%]">Remarks</th>
+                    <th className="px-2 py-3 text-center w-[17%]">Remarks</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {rawData.map((item, idx) => (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="px-2 py-2 text-slate-500 text-center">{idx + 1}</td>
-                      <td className="px-2 py-2 font-bold text-slate-700 text-left whitespace-normal break-words">{item.desc}</td>
+                      <td className="px-2 py-2 font-bold text-slate-700 text-center whitespace-normal break-words">{item.desc}</td>
                       <td className="px-2 py-2 text-slate-500 text-[11px] text-center">{item.unit}</td>
                       <td className="px-2 py-2 text-right font-bold text-slate-900 bg-white">{item.opening.toFixed(2)}</td>
                       <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.receipt} onUpdate={(v) => updateRawStock(idx, 'receipt', v)} tableId="raw-material" rowIndex={idx} colIndex={0} readOnly={readOnly} /></td>
                       <td className="px-2 py-2 text-right font-bold text-blue-700 bg-blue-50/30">{item.total.toFixed(2)}</td>
                       <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.issue} onUpdate={(v) => updateRawStock(idx, 'issue', v)} tableId="raw-material" rowIndex={idx} colIndex={1} readOnly={readOnly} /></td>
                       <td className="px-2 py-2 text-right font-bold text-green-700 bg-green-50/30">{item.closing.toFixed(2)}</td>
-                      <td className="px-2 py-2"><EditableCell type="text" value={item.remarks} className="text-left font-bold text-slate-700 justify-start whitespace-normal break-words" onUpdate={(v) => updateRawStock(idx, 'remarks', v)} tableId="raw-material" rowIndex={idx} colIndex={2} readOnly={readOnly} /></td>
+                      <td className="px-2 py-2"><EditableCell type="text" value={item.remarks} className="font-bold text-slate-700 text-center whitespace-normal break-words" onUpdate={(v) => updateRawStock(idx, 'remarks', v)} tableId="raw-material" rowIndex={idx} colIndex={2} readOnly={readOnly} /></td>
                     </tr>
                   ))}
                   <tr className="bg-slate-100 font-bold text-slate-900">
@@ -269,33 +414,66 @@ export const ProductionDashboardView = ({
         {productionTab === 'finished-stock' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
             <div className="flex flex-col justify-between items-center text-center mb-6"><span className="font-extrabold text-lg text-indigo-900 mb-1">ABC ASHPRO</span><div className="w-full max-w-sm border-b-2 border-indigo-800 mb-2"></div><h3 className="font-bold text-indigo-800 text-lg">FINISHED STOCK REPORT</h3></div>
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <table className="w-full table-fixed text-xs md:text-sm text-left">
+            <div className="mb-4 grid gap-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <InputGroup label="Add Size">
+                  <input
+                    type="text"
+                    value={newFinishedSize}
+                    onChange={(e) => setNewFinishedSize(e.target.value)}
+                    className="w-full rounded-lg border border-indigo-200 bg-white p-2.5 outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="e.g. 600X300X200"
+                  />
+                </InputGroup>
+                <InputGroup label="Remove Size">
+                  <select
+                    value={finishedSizeToRemove}
+                    onChange={(e) => setFinishedSizeToRemove(e.target.value)}
+                    className="w-full rounded-lg border border-indigo-200 bg-white p-2.5 outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">Select size</option>
+                    {(finishedData.sizes || FINISHED_STOCK_SIZES).map((sizeOption) => (
+                      <option key={sizeOption} value={sizeOption}>{sizeOption}</option>
+                    ))}
+                  </select>
+                </InputGroup>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={handleAddFinishedSize} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">Add Size</button>
+                <button type="button" onClick={handleRemoveFinishedSize} className="rounded-lg border border-indigo-200 bg-white px-4 py-2.5 text-sm font-bold text-indigo-700 hover:bg-indigo-100">Delete Size</button>
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full table-fixed text-xs md:text-sm text-center">
                 <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs">
                   <tr>
                     <th className="px-2 py-3 text-center w-[6%]">SL</th>
-                    <th className="px-2 py-3 text-left w-[18%]">Size</th>
-                    <th className="px-2 py-3 text-right w-[10%] bg-blue-50/50">Opening</th>
-                    <th className="px-2 py-3 text-right w-[10%] bg-green-50/50">Segregation</th>
-                    <th className="px-2 py-3 text-right w-[10%] bg-orange-50/50">Sale</th>
-                    <th className="px-2 py-3 text-right w-[12%] bg-red-50/50">Pro Rej.</th>
-                    <th className="px-2 py-3 text-right w-[12%] bg-red-50/50">Load Rej.</th>
-                    <th className="px-2 py-3 text-right w-[12%] bg-yellow-50/50">Self Use</th>
-                    <th className="px-2 py-3 text-right w-[10%] font-extrabold bg-indigo-100/50">Closing</th>
+                    <th className="px-2 py-3 text-center w-[16%]">Size</th>
+                    <th className="px-2 py-3 text-right w-[9%] bg-blue-50/50">Opening</th>
+                    <th className="px-2 py-3 text-right w-[9%] bg-green-50/50">Segregation</th>
+                    <th className="px-2 py-3 text-right w-[9%] bg-orange-50/50">Sale</th>
+                    <th className="px-2 py-3 text-right w-[10%] bg-red-50/50">Pro Rej.</th>
+                    <th className="px-2 py-3 text-right w-[10%] bg-red-50/50">Load Rej.</th>
+                    <th className="px-2 py-3 text-right w-[9%] bg-yellow-50/50">Self Use</th>
+                    <th className="px-2 py-3 text-right w-[9%] bg-yellow-50/50">Self Use (BJM)</th>
+                    <th className="px-2 py-3 text-right w-[9%] font-extrabold bg-indigo-100/50">Closing</th>
+                    <th className="px-2 py-3 text-right w-[9%] bg-slate-100/70">In Autoclave</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {finishedData.items.map((item, idx) => (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="px-2 py-2 text-slate-500 text-center">{idx + 1}</td>
-                      <td className="px-2 py-2 font-bold text-slate-900 text-[11px] text-left whitespace-normal break-words">{item.size}</td>
+                      <td className="px-2 py-2 font-bold text-slate-900 text-center text-[11px] whitespace-normal break-words">{item.size}</td>
                       <td className="px-2 py-2 text-right font-mono text-slate-900 bg-white">{item.opening.toFixed(2)}</td>
                       <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.segregation} onUpdate={(v) => updateFinishedStock(idx, 'segregation', v)} tableId="finished-stock" rowIndex={idx} colIndex={0} readOnly={readOnly} /></td>
                       <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.sale} onUpdate={(v) => updateFinishedStock(idx, 'sale', v)} tableId="finished-stock" rowIndex={idx} colIndex={1} readOnly={readOnly} /></td>
                       <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.proRejection} onUpdate={(v) => updateFinishedStock(idx, 'proRejection', v)} tableId="finished-stock" rowIndex={idx} colIndex={2} readOnly={readOnly} /></td>
                       <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.loadingRejection} onUpdate={(v) => updateFinishedStock(idx, 'loadingRejection', v)} tableId="finished-stock" rowIndex={idx} colIndex={3} readOnly={readOnly} /></td>
                       <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.selfUse} onUpdate={(v) => updateFinishedStock(idx, 'selfUse', v)} tableId="finished-stock" rowIndex={idx} colIndex={4} readOnly={readOnly} /></td>
+                      <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.selfUseBjm} onUpdate={(v) => updateFinishedStock(idx, 'selfUseBjm', v)} tableId="finished-stock" rowIndex={idx} colIndex={5} readOnly={readOnly} /></td>
                       <td className="px-2 py-2 text-right font-bold text-indigo-700 bg-indigo-50/30">{item.closing.toFixed(2)}</td>
+                      <td className="px-2 py-2"><EditableCell type="text" inputMode="decimal" className="text-right font-bold text-slate-700" value={item.inAutoclave} onUpdate={(v) => updateFinishedStock(idx, 'inAutoclave', v)} tableId="finished-stock" rowIndex={idx} colIndex={6} readOnly={readOnly} /></td>
                     </tr>
                   ))}
                   <tr className="bg-slate-200 font-bold text-slate-900 border-t-2 border-slate-300">
@@ -306,16 +484,19 @@ export const ProductionDashboardView = ({
                     <td className="px-2 py-3 text-right bg-red-200/50">{calculateColumnTotal(finishedData.items, 'proRejection')}</td>
                     <td className="px-2 py-3 text-right bg-red-200/50">{calculateColumnTotal(finishedData.items, 'loadingRejection')}</td>
                     <td className="px-2 py-3 text-right bg-yellow-200/50">{calculateColumnTotal(finishedData.items, 'selfUse')}</td>
+                    <td className="px-2 py-3 text-right bg-yellow-200/50">{calculateColumnTotal(finishedData.items, 'selfUseBjm')}</td>
                     <td className="px-2 py-3 text-right bg-indigo-300/50">{calculateColumnTotal(finishedData.items, 'closing')}</td>
+                    <td className="px-2 py-3 text-right bg-slate-200/70">{calculateColumnTotal(finishedData.items, 'inAutoclave')}</td>
                   </tr>
                   <tr className="bg-yellow-50 font-bold border-t border-yellow-200">
                     <td className="px-2 py-3 text-center text-yellow-700">1</td>
-                    <td className="px-2 py-3 text-left text-yellow-900">MORTAR (BAG)</td>
+                    <td className="px-2 py-3 text-center text-yellow-900">MORTAR (BAG)</td>
                     <td className="px-2 py-3 text-right font-mono text-slate-900 bg-yellow-100/50">{finishedData.mortarBag.opening}</td>
-                    <td className="px-2 py-3"><EditableCell type="text" inputMode="decimal" className="text-right bg-white/50 font-bold text-slate-700" value={finishedData.mortarBag.receipt} onUpdate={(v) => updateMortarBag('receipt', v)} tableId="finished-stock" rowIndex={FINISHED_STOCK_SIZES.length} colIndex={0} readOnly={readOnly} /></td>
-                    <td className="px-2 py-3"><EditableCell type="text" inputMode="decimal" className="text-right bg-white/50 font-bold text-slate-700" value={finishedData.mortarBag.sale} onUpdate={(v) => updateMortarBag('sale', v)} tableId="finished-stock" rowIndex={FINISHED_STOCK_SIZES.length} colIndex={1} readOnly={readOnly} /></td>
-                    <td colSpan="3" className="px-2 py-3 text-center text-[11px] text-slate-400 italic bg-yellow-50/50">N/A</td>
+                    <td className="px-2 py-3"><EditableCell type="text" inputMode="decimal" className="text-right bg-white/50 font-bold text-slate-700" value={finishedData.mortarBag.receipt} onUpdate={(v) => updateMortarBag('receipt', v)} tableId="finished-stock" rowIndex={(finishedData.sizes || FINISHED_STOCK_SIZES).length} colIndex={0} readOnly={readOnly} /></td>
+                    <td className="px-2 py-3"><EditableCell type="text" inputMode="decimal" className="text-right bg-white/50 font-bold text-slate-700" value={finishedData.mortarBag.sale} onUpdate={(v) => updateMortarBag('sale', v)} tableId="finished-stock" rowIndex={(finishedData.sizes || FINISHED_STOCK_SIZES).length} colIndex={1} readOnly={readOnly} /></td>
+                    <td colSpan="4" className="px-2 py-3 text-center text-[11px] text-slate-400 italic bg-yellow-50/50">N/A</td>
                     <td className="px-2 py-3 text-right text-indigo-700 font-extrabold bg-yellow-100/50">{finishedData.mortarBag.closing}</td>
+                    <td className="px-2 py-3 text-center text-slate-400 italic bg-yellow-50/50">-</td>
                   </tr>
                 </tbody>
               </table>
@@ -351,33 +532,435 @@ export const ProductionDashboardView = ({
 export const SystemLogsView = ({ logs, formatDateTimeDisplay }) => (
   <div className="space-y-6">
     <div className="flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200"><div><h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><History className="w-5 h-5 text-slate-600" /> System Audit Logs</h2><p className="text-xs text-slate-400">Real-time activity tracking.</p></div></div>
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th className="px-4 py-3">Time</th><th className="px-4 py-3">Team</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Details</th></tr></thead><tbody className="divide-y divide-slate-100">{logs.map((log) => (<tr key={log.id} className="hover:bg-slate-50"><td className="px-4 py-2 text-slate-500 whitespace-nowrap text-xs">{formatDateTimeDisplay(log.timestamp)}</td><td className="px-4 py-2 font-bold text-slate-700 text-xs">{log.team}</td><td className="px-4 py-2"><span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">{log.action}</span></td><td className="px-4 py-2 text-slate-600">{log.details}</td></tr>))}</tbody></table></div>
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm text-center"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th className="px-4 py-3 text-center">Time</th><th className="px-4 py-3 text-center">Team</th><th className="px-4 py-3 text-center">Action</th><th className="px-4 py-3 text-center">Details</th></tr></thead><tbody className="divide-y divide-slate-100">{logs.map((log) => (<tr key={log.id} className="hover:bg-slate-50"><td className="px-4 py-2 text-slate-500 whitespace-nowrap text-xs text-center">{formatDateTimeDisplay(log.timestamp)}</td><td className="px-4 py-2 font-bold text-slate-700 text-xs text-center">{log.team}</td><td className="px-4 py-2 text-center"><span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">{log.action}</span></td><td className="px-4 py-2 text-slate-600 text-center">{log.details}</td></tr>))}</tbody></table></div></div>
   </div>
 );
 
 export const LoadingReportView = ({ getLoadingReportData, updateEntry, updateTruckTypeAndRates, toggleGS, safeInt }) => (
   <div className="space-y-6">
     <div className="flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200"><div><h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><ClipboardList className="w-5 h-5 text-blue-600" /> Loading & Unloading Report</h2><p className="text-xs text-slate-400">Labor and Rates tracking for dispatched orders</p></div></div>
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Type</th><th className="px-4 py-3 text-center w-12">GS</th><th className="px-4 py-3">Loading By</th><th className="px-4 py-3 w-24 text-right">Load Rate</th><th className="px-4 py-3">Unloading By</th><th className="px-4 py-3 w-24 text-right">Unload Rate</th><th className="px-4 py-3">Remarks</th></tr></thead><tbody className="divide-y divide-slate-100">{getLoadingReportData().map((order) => (<tr key={order.id} className="hover:bg-slate-50 transition-colors"><td className="px-4 py-3"><EditableCell value={order.orderDate} type="date" onUpdate={(v) => updateEntry('orders', order.id, 'orderDate', v)} /></td><td className="px-4 py-3"><EditableCell value={order.client} onUpdate={(v) => updateEntry('orders', order.id, 'client', v)} /></td><td className="px-4 py-3"><EditableCell value={order.vehicle} className="font-mono" onUpdate={(v) => updateEntry('orders', order.id, 'vehicle', v)} /></td><td className="px-4 py-3"><EditableCell value={order.truckType} type="text" inputMode="decimal" onUpdate={(v) => updateTruckTypeAndRates(order, v)} /></td><td className="px-4 py-3 text-center"><input type="checkbox" checked={order.gsChecked || false} onChange={() => toggleGS(order)} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer" /></td><td className="px-4 py-3"><EditableCell value={order.loadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'loadingBy', v)} /></td><td className="px-4 py-3"><EditableCell value={order.displayLoadRate} type="number" className="text-right" onUpdate={(v) => updateEntry('orders', order.id, 'loadingRate', safeInt(v))} /></td><td className="px-4 py-3"><EditableCell value={order.unloadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'unloadingBy', v)} /></td><td className="px-4 py-3"><EditableCell value={order.displayUnloadRate} type="number" className="text-right" onUpdate={(v) => updateEntry('orders', order.id, 'unloadingRate', safeInt(v))} /></td><td className="px-4 py-3"><EditableCell value={order.remarks} onUpdate={(v) => updateEntry('orders', order.id, 'remarks', v)} /></td></tr>))}</tbody></table></div></div>
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm text-center"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th className="px-4 py-3 text-center">Date</th><th className="px-4 py-3 text-center">Client</th><th className="px-4 py-3 text-center">Vehicle</th><th className="px-4 py-3 text-center">Type</th><th className="px-4 py-3 text-center w-12">GS</th><th className="px-4 py-3 text-center">Loading By</th><th className="px-4 py-3 w-24 text-center">Load Rate</th><th className="px-4 py-3 text-center">Unloading By</th><th className="px-4 py-3 w-24 text-center">Unload Rate</th><th className="px-4 py-3 text-center">Remarks</th></tr></thead><tbody className="divide-y divide-slate-100">{getLoadingReportData().map((order) => (<tr key={order.id} className="hover:bg-slate-50 transition-colors"><td className="px-4 py-3 text-center"><EditableCell value={order.orderDate} type="date" onUpdate={(v) => updateEntry('orders', order.id, 'orderDate', v)} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.client} onUpdate={(v) => updateEntry('orders', order.id, 'client', v)} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.vehicle} className="font-mono justify-center text-center" onUpdate={(v) => updateEntry('orders', order.id, 'vehicle', v)} /></td><td className="px-4 py-3 text-center"><EditableCell value={order.truckType} type="text" inputMode="decimal" onUpdate={(v) => updateTruckTypeAndRates(order, v)} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><input type="checkbox" checked={order.gsChecked || false} onChange={() => toggleGS(order)} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.loadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'loadingBy', v)} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.displayLoadRate} type="number" onUpdate={(v) => updateEntry('orders', order.id, 'loadingRate', safeInt(v))} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.unloadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'unloadingBy', v)} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.displayUnloadRate} type="number" onUpdate={(v) => updateEntry('orders', order.id, 'unloadingRate', safeInt(v))} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.remarks} onUpdate={(v) => updateEntry('orders', order.id, 'remarks', v)} className="justify-center text-center" /></td></tr>))}</tbody></table></div></div>
   </div>
 );
 
 export const DetailedSalesReportView = ({ getDetailedSalesData, updateEntry, openPreview, updateTruckTypeAndRates, toggleGS, safeInt }) => (
   <div className="space-y-6">
     <div className="flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200"><div><h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-green-600" /> Detailed Sales Report</h2><p className="text-xs text-slate-400">Comprehensive log with billing details</p></div></div>
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm text-left whitespace-nowrap"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Invoice ID</th><th className="px-4 py-3 text-center">Inv. File</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Site</th><th className="px-4 py-3 text-right">CBM</th><th className="px-4 py-3 text-right">BJM</th><th className="px-4 py-3 text-right">BJM Rate</th><th className="px-4 py-3 text-right">Bill Amt</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Transporter</th><th className="px-4 py-3 text-right">Net Wt</th><th className="px-4 py-3">Loading</th><th className="px-4 py-3 text-right">L. Rate</th><th className="px-4 py-3">Unloading</th><th className="px-4 py-3 text-right">U. Rate</th><th className="px-4 py-3 text-center">GS</th><th className="px-4 py-3">Ref</th></tr></thead><tbody className="divide-y divide-slate-100">{getDetailedSalesData().map((order, idx) => (<tr key={order.id} className="hover:bg-slate-50 transition-colors"><td className="px-4 py-3"><EditableCell value={order.orderDate} type="date" onUpdate={(v) => updateEntry('orders', order.id, 'orderDate', v)} tableId="sales-report" rowIndex={idx} colIndex={0} /></td><td className="px-4 py-3"><EditableCell value={order.invoiceId || order.invoiceNumber || ''} onUpdate={(v) => updateEntry('orders', order.id, 'invoiceId', v)} tableId="sales-report" rowIndex={idx} colIndex={1} /></td><td className="px-4 py-3 text-center">{order.invoice ? (<button onClick={() => openPreview('invoice', order.invoice, order.id, false, order.invoiceUrl)} className="text-indigo-600 hover:underline text-xs">View</button>) : <span className="text-slate-300">-</span>}</td><td className="px-4 py-3"><EditableCell value={order.client} onUpdate={(v) => updateEntry('orders', order.id, 'client', v)} tableId="sales-report" rowIndex={idx} colIndex={2} /></td><td className="px-4 py-3"><EditableCell value={order.location} onUpdate={(v) => updateEntry('orders', order.id, 'location', v)} tableId="sales-report" rowIndex={idx} colIndex={3} /></td><td className="px-4 py-3"><EditableCell value={order.cbm} type="text" inputMode="decimal" className="text-right font-mono" onUpdate={(v) => updateEntry('orders', order.id, 'cbm', v)} tableId="sales-report" rowIndex={idx} colIndex={4} /></td><td className="px-4 py-3"><EditableCell value={order.bjm} type="text" inputMode="decimal" className="text-right font-mono" onUpdate={(v) => updateEntry('orders', order.id, 'bjm', v)} tableId="sales-report" rowIndex={idx} colIndex={5} /></td><td className="px-4 py-3"><EditableCell value={order.bjmRate} type="text" inputMode="decimal" className="text-right font-mono" onUpdate={(v) => updateEntry('orders', order.id, 'bjmRate', v)} tableId="sales-report" rowIndex={idx} colIndex={6} /></td><td className="px-4 py-3 text-right font-bold text-slate-800">₹ {order.totalBill}</td><td className="px-4 py-3"><EditableCell value={order.vehicle} className="font-mono" onUpdate={(v) => updateEntry('orders', order.id, 'vehicle', v)} tableId="sales-report" rowIndex={idx} colIndex={7} /></td><td className="px-4 py-3"><EditableCell value={order.truckType} type="text" inputMode="decimal" onUpdate={(v) => updateTruckTypeAndRates(order, v)} tableId="sales-report" rowIndex={idx} colIndex={8} /></td><td className="px-4 py-3"><EditableCell value={order.transporter} onUpdate={(v) => updateEntry('orders', order.id, 'transporter', v)} tableId="sales-report" rowIndex={idx} colIndex={9} /></td><td className="px-4 py-3"><EditableCell value={order.netWt} type="text" inputMode="decimal" className="text-right font-mono" onUpdate={(v) => updateEntry('orders', order.id, 'netWt', v)} tableId="sales-report" rowIndex={idx} colIndex={10} /></td><td className="px-4 py-3"><EditableCell value={order.loadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'loadingBy', v)} tableId="sales-report" rowIndex={idx} colIndex={11} /></td><td className="px-4 py-3"><EditableCell value={order.displayLoadRate} type="text" inputMode="decimal" className="text-right" onUpdate={(v) => updateEntry('orders', order.id, 'loadingRate', safeInt(v))} tableId="sales-report" rowIndex={idx} colIndex={12} /></td><td className="px-4 py-3"><EditableCell value={order.unloadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'unloadingBy', v)} tableId="sales-report" rowIndex={idx} colIndex={13} /></td><td className="px-4 py-3"><EditableCell value={order.displayUnloadRate} type="text" inputMode="decimal" className="text-right" onUpdate={(v) => updateEntry('orders', order.id, 'unloadingRate', safeInt(v))} tableId="sales-report" rowIndex={idx} colIndex={14} /></td><td className="px-4 py-3 text-center"><input type="checkbox" checked={order.gsChecked || false} onChange={() => toggleGS(order)} className="w-4 h-4 text-green-600 rounded border-slate-300 focus:ring-green-500 cursor-pointer" /></td><td className="px-4 py-3"><EditableCell value={order.reference} onUpdate={(v) => updateEntry('orders', order.id, 'reference', v)} tableId="sales-report" rowIndex={idx} colIndex={15} /></td></tr>))}</tbody></table></div></div>
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm text-center whitespace-nowrap"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th className="px-4 py-3 text-center">Date</th><th className="px-4 py-3 text-center">Invoice ID</th><th className="px-4 py-3 text-center">Inv. File</th><th className="px-4 py-3 text-center">Client</th><th className="px-4 py-3 text-center">Site</th><th className="px-4 py-3 text-center">CBM</th><th className="px-4 py-3 text-center">BJM</th><th className="px-4 py-3 text-center">BJM Rate</th><th className="px-4 py-3 text-center">Bill Amt</th><th className="px-4 py-3 text-center">Vehicle</th><th className="px-4 py-3 text-center">Type</th><th className="px-4 py-3 text-center">Transporter</th><th className="px-4 py-3 text-center">Net Wt</th><th className="px-4 py-3 text-center">Loading</th><th className="px-4 py-3 text-center">L. Rate</th><th className="px-4 py-3 text-center">Unloading</th><th className="px-4 py-3 text-center">U. Rate</th><th className="px-4 py-3 text-center">GS</th><th className="px-4 py-3 text-center">Ref</th></tr></thead><tbody className="divide-y divide-slate-100">{getDetailedSalesData().map((order, idx) => (<tr key={order.id} className="hover:bg-slate-50 transition-colors"><td className="px-4 py-3 text-center"><EditableCell value={order.orderDate} type="date" onUpdate={(v) => updateEntry('orders', order.id, 'orderDate', v)} tableId="sales-report" rowIndex={idx} colIndex={0} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.invoiceId || order.invoiceNumber || ''} onUpdate={(v) => updateEntry('orders', order.id, 'invoiceId', v)} tableId="sales-report" rowIndex={idx} colIndex={1} className="justify-center text-center" /></td><td className="px-4 py-3 text-center">{order.invoice ? (<button onClick={() => openPreview('invoice', order.invoice, order.id, false, order.invoiceUrl)} className="text-indigo-600 hover:underline text-xs">View</button>) : <span className="text-slate-300">-</span>}</td><td className="px-4 py-3 text-center"><EditableCell value={order.client} onUpdate={(v) => updateEntry('orders', order.id, 'client', v)} tableId="sales-report" rowIndex={idx} colIndex={2} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.location} onUpdate={(v) => updateEntry('orders', order.id, 'location', v)} tableId="sales-report" rowIndex={idx} colIndex={3} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.cbm} type="text" inputMode="decimal" className="text-center font-mono justify-center" onUpdate={(v) => updateEntry('orders', order.id, 'cbm', v)} tableId="sales-report" rowIndex={idx} colIndex={4} /></td><td className="px-4 py-3 text-center"><EditableCell value={order.bjm} type="text" inputMode="decimal" className="text-center font-mono justify-center" onUpdate={(v) => updateEntry('orders', order.id, 'bjm', v)} tableId="sales-report" rowIndex={idx} colIndex={5} /></td><td className="px-4 py-3 text-center"><EditableCell value={order.bjmRate} type="text" inputMode="decimal" className="text-center font-mono justify-center" onUpdate={(v) => updateEntry('orders', order.id, 'bjmRate', v)} tableId="sales-report" rowIndex={idx} colIndex={6} /></td><td className="px-4 py-3 text-center font-bold text-slate-800">₹ {order.totalBill}</td><td className="px-4 py-3 text-center"><EditableCell value={order.vehicle} className="font-mono justify-center text-center" onUpdate={(v) => updateEntry('orders', order.id, 'vehicle', v)} tableId="sales-report" rowIndex={idx} colIndex={7} /></td><td className="px-4 py-3 text-center"><EditableCell value={order.truckType} type="text" inputMode="decimal" onUpdate={(v) => updateTruckTypeAndRates(order, v)} tableId="sales-report" rowIndex={idx} colIndex={8} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.transporter} onUpdate={(v) => updateEntry('orders', order.id, 'transporter', v)} tableId="sales-report" rowIndex={idx} colIndex={9} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.netWt} type="text" inputMode="decimal" className="text-center font-mono justify-center" onUpdate={(v) => updateEntry('orders', order.id, 'netWt', v)} tableId="sales-report" rowIndex={idx} colIndex={10} /></td><td className="px-4 py-3 text-center"><EditableCell value={order.loadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'loadingBy', v)} tableId="sales-report" rowIndex={idx} colIndex={11} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.displayLoadRate} type="text" inputMode="decimal" className="text-center justify-center" onUpdate={(v) => updateEntry('orders', order.id, 'loadingRate', safeInt(v))} tableId="sales-report" rowIndex={idx} colIndex={12} /></td><td className="px-4 py-3 text-center"><EditableCell value={order.unloadingBy} onUpdate={(v) => updateEntry('orders', order.id, 'unloadingBy', v)} tableId="sales-report" rowIndex={idx} colIndex={13} className="justify-center text-center" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.displayUnloadRate} type="text" inputMode="decimal" className="text-center justify-center" onUpdate={(v) => updateEntry('orders', order.id, 'unloadingRate', safeInt(v))} tableId="sales-report" rowIndex={idx} colIndex={14} /></td><td className="px-4 py-3 text-center"><input type="checkbox" checked={order.gsChecked || false} onChange={() => toggleGS(order)} className="w-4 h-4 text-green-600 rounded border-slate-300 focus:ring-green-500 cursor-pointer" /></td><td className="px-4 py-3 text-center"><EditableCell value={order.reference} onUpdate={(v) => updateEntry('orders', order.id, 'reference', v)} tableId="sales-report" rowIndex={idx} colIndex={15} className="justify-center text-center" /></td></tr>))}</tbody></table></div></div>
   </div>
 );
 
-export const DieselRegisterView = ({ getDieselRegisterData, updateEntry, handleManualDieselSubmit, manualDieselForm, setManualDieselForm }) => (
-  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <div className="lg:col-span-2 space-y-6">
-      <div className="flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-200"><div><h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Fuel className="w-5 h-5 text-orange-600" /> Diesel Usage Register</h2><p className="text-xs text-slate-400">Combined log of Transport & Plant Machinery</p></div></div>
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs"><tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Client / Machine</th><th className="px-4 py-3">Loc / Site</th><th className="px-4 py-3">Vehicle / ID</th><th className="px-4 py-3">Operator / Issued To</th><th className="px-4 py-3">Purpose</th><th className="px-4 py-3">KM / Hrs</th><th className="px-4 py-3 text-right">HSD (L)</th></tr></thead><tbody className="divide-y divide-slate-100">{getDieselRegisterData().map((entry) => (<tr key={entry.id} className="hover:bg-slate-50 transition-colors"><td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap"><EditableCell value={entry.date} type="date" onUpdate={(v) => updateEntry(entry.collection, entry.id, entry.collection === 'orders' ? 'orderDate' : 'date', v)} /></td><td className="px-4 py-3 text-slate-700"><EditableCell value={entry.name} onUpdate={(v) => updateEntry(entry.collection, entry.id, entry.collection === 'orders' ? 'client' : 'name', v)} />{entry.type === 'In-Plant' && <span className="text-[9px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded uppercase tracking-wider ml-1">Plant</span>}</td><td className="px-4 py-3 text-slate-500"><EditableCell value={entry.location} onUpdate={(v) => updateEntry(entry.collection, entry.id, 'location', v)} /></td><td className="px-4 py-3 font-mono text-slate-600 text-xs"><EditableCell value={entry.vehicle} onUpdate={(v) => updateEntry(entry.collection, entry.id, entry.collection === 'orders' ? 'vehicle' : 'id', v)} /></td><td className="px-4 py-3 text-slate-600"><EditableCell value={entry.driver} onUpdate={(v) => updateEntry(entry.collection, entry.id, entry.collection === 'orders' ? 'driverName' : 'driver', v)} /></td><td className="px-4 py-3 text-slate-600"><EditableCell value={entry.purpose || ''} onUpdate={(v) => updateEntry(entry.collection, entry.id, 'purpose', v)} /></td><td className="px-4 py-3 text-slate-600"><EditableCell value={entry.km} onUpdate={(v) => updateEntry(entry.collection, entry.id, entry.collection === 'orders' ? 'tripKm' : 'km', v)} /></td><td className="px-4 py-3 text-right font-bold text-slate-800"><EditableCell value={entry.hsd} className="text-right" onUpdate={(v) => updateEntry(entry.collection, entry.id, 'hsd', v)} /></td></tr>))}</tbody></table></div></div>
+export const DieselRegisterView = ({
+  getDieselRegisterData,
+  updateEntry,
+  handleManualDieselSubmit,
+  manualDieselForm,
+  setManualDieselForm,
+  handleDieselIntakeSubmit,
+  dieselIntakeForm,
+  setDieselIntakeForm,
+  dieselViewDate,
+  setDieselViewDate,
+  getTodayString,
+  setView,
+  onDeleteEntry,
+}) => {
+  const entries = getDieselRegisterData(dieselViewDate);
+
+  const handleDateChange = (offset) => {
+    const current = new Date(`${dieselViewDate || getTodayString()}T12:00:00Z`);
+    if (Number.isNaN(current.getTime())) return;
+    current.setUTCDate(current.getUTCDate() + offset);
+    setDieselViewDate(current.toISOString().split('T')[0]);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center">
+        <div className="text-center lg:text-left">
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Fuel className="w-5 h-5 text-orange-600" /> Diesel Usage Register</h2>
+          <p className="text-xs text-slate-400">Daily balance, inflow, and vehicle usage log</p>
+        </div>
+        <div className="flex items-center justify-center gap-2">
+          <button type="button" onClick={() => handleDateChange(-1)} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"><ChevronLeft className="w-4 h-4" /></button>
+          <input type="date" value={dieselViewDate} onChange={(e) => setDieselViewDate(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-500" />
+          <button type="button" onClick={() => handleDateChange(1)} className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"><ChevronRight className="w-4 h-4" /></button>
+        </div>
+        <div className="flex justify-center lg:justify-end">
+          <button
+            type="button"
+            onClick={() => setView('diesel-monthly-report')}
+            className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-orange-700"
+          >
+            <Calendar className="w-4 h-4" />
+            Monthly Report
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-[1280px] w-full table-fixed text-[11px] md:text-sm text-center">
+              <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wide">
+                <tr>
+                  <th className="px-3 py-3 w-[9%] text-center">Date</th>
+                  <th className="px-3 py-3 w-[12%] text-center">Vehicle Number</th>
+                  <th className="px-3 py-3 w-[8%] text-center">Opening</th>
+                  <th className="px-3 py-3 w-[8%] text-center">Type</th>
+                  <th className="px-3 py-3 w-[12%] text-center">Client / Machine</th>
+                  <th className="px-3 py-3 w-[11%] text-center">Loc / Site</th>
+                  <th className="px-3 py-3 w-[11%] text-center">Operator / Issued To</th>
+                  <th className="px-3 py-3 w-[11%] text-center">Purpose</th>
+                  <th className="px-3 py-3 w-[8%] text-center">KM / Hrs</th>
+                  <th className="px-3 py-3 w-[8%] text-center">HSD (L)</th>
+                  <th className="px-3 py-3 w-[8%] text-center">Closing</th>
+                  <th className="px-3 py-3 w-[5%] text-center">Del</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {entries.map((entry, index) => {
+                  const isIntake = String(entry.flowType || '').toLowerCase() === 'inflow';
+                  const typeLabel = isIntake ? 'Inflow' : 'Usage';
+
+                  if (entry.isPlaceholder) {
+                    return (
+                      <tr key={entry.id} className="bg-slate-50/70">
+                        <td className="px-4 py-3 font-medium text-center text-slate-800 whitespace-nowrap">{formatDateDisplay(entry.date)}</td>
+                        <td className="px-3 py-3 font-mono text-center text-slate-600">-</td>
+                        <td className="px-3 py-3 text-center font-semibold text-slate-700">{entry.opening.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-center"><span className="inline-flex rounded-full bg-slate-200 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-700">Opening</span></td>
+                        <td className="px-3 py-3 text-center text-slate-600">Opening Balance</td>
+                        <td className="px-3 py-3 text-center text-slate-500">-</td>
+                        <td className="px-3 py-3 text-center text-slate-500">-</td>
+                        <td className="px-3 py-3 text-center text-slate-500">Carry Forward</td>
+                        <td className="px-3 py-3 text-center text-slate-500">-</td>
+                        <td className="px-3 py-3 text-center font-bold text-slate-700">0.00</td>
+                        <td className="px-3 py-3 text-center font-semibold text-slate-700">{entry.closing.toFixed(2)}</td>
+                        <td className="px-3 py-3 text-center text-slate-300">-</td>
+                      </tr>
+                    );
+                  }
+
+                  return (
+                    <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-center text-slate-800 whitespace-nowrap"><EditableCell value={entry.date} type="date" displayFormatter={formatDateDisplay} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'date', v)} tableId="diesel-register" rowIndex={index} colIndex={0} /></td>
+                      <td className="px-3 py-3 font-mono text-center text-slate-700"><EditableCell value={entry.vehicle} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'vehicle', v)} tableId="diesel-register" rowIndex={index} colIndex={1} /></td>
+                      <td className="px-3 py-3 text-center font-semibold text-slate-700">{entry.opening.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-center"><span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${isIntake ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>{typeLabel}</span></td>
+                      <td className="px-3 py-3 text-center text-slate-700"><EditableCell value={entry.name} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'name', v)} tableId="diesel-register" rowIndex={index} colIndex={2} /></td>
+                      <td className="px-3 py-3 text-center text-slate-500"><EditableCell value={entry.location} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'location', v)} tableId="diesel-register" rowIndex={index} colIndex={3} /></td>
+                      <td className="px-3 py-3 text-center text-slate-600"><EditableCell value={entry.driver} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'driver', v)} tableId="diesel-register" rowIndex={index} colIndex={4} /></td>
+                      <td className="px-3 py-3 text-center text-slate-600"><EditableCell value={entry.purpose || ''} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'purpose', v)} tableId="diesel-register" rowIndex={index} colIndex={5} /></td>
+                      <td className="px-3 py-3 text-center text-slate-600"><EditableCell value={entry.km} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'km', v)} tableId="diesel-register" rowIndex={index} colIndex={6} /></td>
+                      <td className="px-3 py-3 text-center font-bold text-slate-800"><EditableCell value={entry.hsd} className="justify-center text-center" onUpdate={(v) => updateEntry(entry.collection, entry.sourceId, 'hsd', v)} tableId="diesel-register" rowIndex={index} colIndex={7} /></td>
+                      <td className="px-3 py-3 text-center font-semibold text-slate-700">{entry.closing.toFixed(2)}</td>
+                      <td className="px-3 py-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => onDeleteEntry && onDeleteEntry(entry)}
+                          className="inline-flex items-center justify-center rounded-full border border-slate-200 p-2 text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                          aria-label={`Delete diesel row ${entry.vehicle || entry.name || ''}`.trim()}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <Card className="p-6 border border-orange-100 bg-gradient-to-br from-white via-orange-50 to-white [&_label]:text-center">
+          <div className="mb-4 text-center">
+            <h3 className="font-bold text-slate-800 flex items-center justify-center gap-2"><Plus className="w-4 h-4 text-orange-600" /> In-Plant Usage</h3>
+            <p className="text-xs text-slate-500">Vehicle-based usage entries for the selected day</p>
+          </div>
+          <form onSubmit={handleManualDieselSubmit} className="mx-auto w-full max-w-6xl space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <InputGroup label="Vehicle Number">
+                <input type="text" required className="w-full rounded-lg border border-slate-300 p-2.5 text-center outline-none focus:ring-2 focus:ring-orange-500" value={manualDieselForm.vehicle} onChange={(e) => setManualDieselForm({ ...manualDieselForm, vehicle: e.target.value })} placeholder="e.g. MH12AB1234" />
+              </InputGroup>
+              <InputGroup label="Site / Location">
+                <input type="text" required className="w-full rounded-lg border border-slate-300 p-2.5 text-center outline-none focus:ring-2 focus:ring-orange-500" value={manualDieselForm.location} onChange={(e) => setManualDieselForm({ ...manualDieselForm, location: e.target.value })} placeholder="e.g. Plant A" />
+              </InputGroup>
+              <InputGroup label="Purpose">
+                <input type="text" required className="w-full rounded-lg border border-slate-300 p-2.5 text-center outline-none focus:ring-2 focus:ring-orange-500" value={manualDieselForm.purpose || ''} onChange={(e) => setManualDieselForm({ ...manualDieselForm, purpose: e.target.value })} placeholder="Required for usage" />
+              </InputGroup>
+              <InputGroup label="Operator / Issued To">
+                <input type="text" required className="w-full rounded-lg border border-slate-300 p-2.5 text-center outline-none focus:ring-2 focus:ring-orange-500" value={manualDieselForm.driver} onChange={(e) => setManualDieselForm({ ...manualDieselForm, driver: e.target.value })} placeholder="Name" />
+              </InputGroup>
+                            <InputGroup label="HSD (Liters)">
+                <input type="text" required className="w-full rounded-lg border border-slate-300 p-2.5 text-center outline-none focus:ring-2 focus:ring-orange-500" value={manualDieselForm.hsd} onChange={(e) => setManualDieselForm({ ...manualDieselForm, hsd: e.target.value })} placeholder="0.00" />
+              </InputGroup>
+              <InputGroup label="KM / Hrs">
+                <input type="text" className="w-full rounded-lg border border-slate-300 p-2.5 text-center outline-none focus:ring-2 focus:ring-orange-500" value={manualDieselForm.km || ''} onChange={(e) => setManualDieselForm({ ...manualDieselForm, km: e.target.value })} placeholder="Optional" />
+              </InputGroup>
+            </div>
+            <button type="submit" className="mt-1 w-full rounded-lg bg-orange-600 py-2.5 text-center font-bold text-white shadow-sm hover:bg-orange-700">Log Usage</button>
+          </form>
+
+          <div className="mt-6 border-t border-orange-100 pt-6">
+            <div className="mb-4 text-center">
+              <h4 className="text-base font-bold text-emerald-800">Diesel Intake</h4>
+            </div>
+            <form onSubmit={handleDieselIntakeSubmit} className="mx-auto w-full max-w-4xl">
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  required
+                  inputMode="decimal"
+                  aria-label="Liters"
+                  className="w-full rounded-lg border border-slate-300 p-2.5 text-center outline-none focus:ring-2 focus:ring-emerald-500"
+                  value={dieselIntakeForm.liters}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    if (nextValue === '' || /^[0-9]*\.?[0-9]*$/.test(nextValue)) {
+                      setDieselIntakeForm({ ...dieselIntakeForm, liters: nextValue });
+                    }
+                  }}
+                  placeholder="0.00"
+                />
+                <button type="submit" className="w-full rounded-lg bg-emerald-600 px-6 py-2.5 text-center font-bold text-white shadow-sm hover:bg-emerald-700">Add Intake</button>
+              </div>
+            </form>
+          </div>
+        </Card>
+      </div>
     </div>
-    <div className="lg:col-span-1"><Card className="p-6 sticky top-24"><h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Plus className="w-4 h-4" /> Add In-Plant Entry</h3><form onSubmit={handleManualDieselSubmit} className="space-y-4"><InputGroup label="Date"><input type="date" required className="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" value={manualDieselForm.date} onChange={(e) => setManualDieselForm({ ...manualDieselForm, date: e.target.value })} /></InputGroup><InputGroup label="Machine Name"><input type="text" required className="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" value={manualDieselForm.name} onChange={(e) => setManualDieselForm({ ...manualDieselForm, name: e.target.value })} placeholder="e.g. Generator 1" /></InputGroup><InputGroup label="Site / Location"><input type="text" required className="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" value={manualDieselForm.location} onChange={(e) => setManualDieselForm({ ...manualDieselForm, location: e.target.value })} placeholder="e.g. Plant A" /></InputGroup><InputGroup label="Purpose"><input type="text" required className="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" value={manualDieselForm.purpose || ''} onChange={(e) => setManualDieselForm({ ...manualDieselForm, purpose: e.target.value })} placeholder="Required for in-plant" /></InputGroup><div className="grid grid-cols-2 gap-3"><InputGroup label="Operator / Issued To"><input type="text" required className="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" value={manualDieselForm.driver} onChange={(e) => setManualDieselForm({ ...manualDieselForm, driver: e.target.value })} placeholder="Name" /></InputGroup><InputGroup label="HSD (Litres)"><input type="text" required className="w-full p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" value={manualDieselForm.hsd} onChange={(e) => setManualDieselForm({ ...manualDieselForm, hsd: e.target.value })} placeholder="0.00" /></InputGroup></div><button type="submit" className="w-full py-2.5 bg-orange-600 text-white font-bold rounded-lg hover:bg-orange-700 transition-colors shadow-sm mt-2">Log Entry</button></form></Card></div>
-  </div>
-);
+  );
+};
+
+const formatDieselMonthLabel = (month) => {
+  const normalized = String(month || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(normalized)) return normalized;
+
+  const [year, monthPart] = normalized.split('-');
+  const monthIndex = Number(monthPart) - 1;
+  const date = new Date(Date.UTC(Number(year), monthIndex, 1, 12, 0, 0));
+  if (Number.isNaN(date.getTime())) return normalized;
+
+  return new Intl.DateTimeFormat('en', { month: 'long', year: 'numeric' }).format(date);
+};
+
+export const MonthlyDieselReportView = ({
+  reportMonth,
+  setReportMonth,
+  loadMonthlyDieselReport,
+  loadMonthlyDieselVehicleTrips,
+  setView,
+}) => {
+  const [report, setReport] = React.useState({ month: reportMonth, totals: { kilometers: 0, dieselUsed: 0, tripCount: 0, vehicleCount: 0 }, vehicles: [] });
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState('');
+  const [expandedVehicle, setExpandedVehicle] = React.useState('');
+  const [tripDetails, setTripDetails] = React.useState({});
+  const [tripLoading, setTripLoading] = React.useState({});
+
+  React.useEffect(() => {
+    let active = true;
+
+    const loadReport = async () => {
+      setLoading(true);
+      setError('');
+      setExpandedVehicle('');
+      setTripDetails({});
+      setTripLoading({});
+
+      try {
+        const nextReport = await loadMonthlyDieselReport(reportMonth);
+        if (!active) return;
+        setReport(nextReport || { month: reportMonth, totals: { kilometers: 0, dieselUsed: 0, tripCount: 0, vehicleCount: 0 }, vehicles: [] });
+      } catch (err) {
+        if (!active) return;
+        setError(err?.message || 'Failed to load monthly diesel report.');
+        setReport({ month: reportMonth, totals: { kilometers: 0, dieselUsed: 0, tripCount: 0, vehicleCount: 0 }, vehicles: [] });
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    void loadReport();
+
+    return () => {
+      active = false;
+    };
+  }, [loadMonthlyDieselReport, reportMonth]);
+
+  const vehicles = Array.isArray(report?.vehicles) ? report.vehicles : [];
+
+  const toggleVehicle = async (vehicleNumber) => {
+    const normalizedVehicle = String(vehicleNumber || '').trim().toUpperCase();
+    if (!normalizedVehicle) return;
+
+    if (expandedVehicle === normalizedVehicle) {
+      setExpandedVehicle('');
+      return;
+    }
+
+    setExpandedVehicle(normalizedVehicle);
+
+    if (tripDetails[normalizedVehicle]) return;
+
+    setTripLoading((prev) => ({ ...prev, [normalizedVehicle]: true }));
+    try {
+      const detailReport = await loadMonthlyDieselVehicleTrips(reportMonth, normalizedVehicle);
+      setTripDetails((prev) => ({ ...prev, [normalizedVehicle]: Array.isArray(detailReport?.trips) ? detailReport.trips : [] }));
+    } catch (err) {
+      setTripDetails((prev) => ({ ...prev, [normalizedVehicle]: [] }));
+      setError(err?.message || 'Failed to load vehicle trip history.');
+    } finally {
+      setTripLoading((prev) => ({ ...prev, [normalizedVehicle]: false }));
+    }
+  };
+
+  const monthValue = String(reportMonth || '').slice(0, 7);
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Diesel Usage</div>
+            <h2 className="mt-1 text-xl font-bold text-slate-900">Monthly Vehicle Summary</h2>
+            <p className="text-sm text-slate-500">Expanded vehicle history shown as a compact table for faster scanning.</p>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => setView('diesel-register')}
+              className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50"
+            >
+              <ChevronLeft className="mr-1.5 w-4 h-4" />
+              Back to Register
+            </button>
+            <InputGroup label="Report Month">
+              <input
+                type="month"
+                value={monthValue}
+                onChange={(e) => setReportMonth(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-center outline-none focus:ring-2 focus:ring-orange-500 sm:w-44"
+              />
+            </InputGroup>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-4 border border-slate-200 bg-white">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Vehicles</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{report?.totals?.vehicleCount || 0}</div>
+        </Card>
+        <Card className="p-4 border border-slate-200 bg-white">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Trips</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{report?.totals?.tripCount || 0}</div>
+        </Card>
+        <Card className="p-4 border border-slate-200 bg-white">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Kilometers</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{formatDieselMetric(report?.totals?.kilometers)}</div>
+        </Card>
+        <Card className="p-4 border border-slate-200 bg-white">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Diesel Used</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{formatDieselMetric(report?.totals?.dieselUsed)}</div>
+        </Card>
+      </div>
+
+      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        {loading ? (
+          <div className="p-6 text-sm text-slate-500">Loading monthly report...</div>
+        ) : vehicles.length === 0 ? (
+          <div className="p-6 text-sm text-slate-500">No diesel usage entries were found for {formatDieselMonthLabel(report?.month || reportMonth)}.</div>
+        ) : (
+          <table className="w-full table-fixed text-center text-sm">
+            <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="w-12 px-3 py-3 text-center"></th>
+                <th className="px-3 py-3 text-center">Vehicle Number</th>
+                <th className="px-3 py-3 text-center">Kilometers</th>
+                <th className="px-3 py-3 text-center">Diesel Used</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {vehicles.map((vehicle) => {
+                const normalizedVehicle = String(vehicle.vehicleNumber || '').trim().toUpperCase();
+                const expanded = expandedVehicle === normalizedVehicle;
+                const details = tripDetails[normalizedVehicle] || [];
+                const loadingDetails = tripLoading[normalizedVehicle];
+
+                return (
+                  <React.Fragment key={normalizedVehicle}>
+                    <tr className={`transition-colors ${expanded ? 'bg-orange-50/40' : 'hover:bg-slate-50'}`}>
+                      <td className="px-3 py-3 align-top">
+                        <button
+                          type="button"
+                          onClick={() => toggleVehicle(normalizedVehicle)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition-colors hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600"
+                          aria-expanded={expanded}
+                          aria-label={expanded ? `Collapse ${normalizedVehicle}` : `Expand ${normalizedVehicle}`}
+                        >
+                          <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+                        </button>
+                      </td>
+                      <td className="px-3 py-3 font-semibold text-slate-900">{normalizedVehicle}</td>
+                      <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatDieselMetric(vehicle.kilometers)}</td>
+                      <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatDieselMetric(vehicle.dieselUsed)}</td>
+                    </tr>
+                    <tr>
+                      <td colSpan={4} className="px-3 pb-0 pt-0">
+                        <div className={`overflow-hidden transition-all duration-300 ${expanded ? 'max-h-[2000px] opacity-100 pb-4' : 'max-h-0 opacity-0'}`}>
+                          <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-4">
+                            {loadingDetails ? (
+                              <div className="text-sm text-slate-500">Loading trip history...</div>
+                            ) : details.length === 0 ? (
+                              <div className="text-sm text-slate-500">No trip details found for this vehicle in {formatDieselMonthLabel(report?.month || reportMonth)}.</div>
+                            ) : (
+                              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                                <table className="min-w-[1100px] w-full table-fixed text-sm text-center">
+                                  <thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                                    <tr>
+                                      <th className="px-3 py-3 w-[11%]">Trip Date</th>
+                                      <th className="px-3 py-3 w-[11%]">Kilometers</th>
+                                      <th className="px-3 py-3 w-[11%]">Diesel Used</th>
+                                      <th className="px-3 py-3 w-[21%]">Location</th>
+                                      <th className="px-3 py-3 w-[18%]">Operator</th>
+                                      <th className="px-3 py-3 w-[20%]">Purpose</th>
+                                      <th className="px-3 py-3 w-[8%]">Invoice</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {details.map((trip) => (
+                                      <tr key={trip.id || `${trip.date}-${trip.createdAt}-${trip.km}`} className="hover:bg-slate-50">
+                                        <td className="px-3 py-3 font-medium text-slate-900 whitespace-nowrap">{formatDateDisplay(trip.date) || '-'}</td>
+                                        <td className="px-3 py-3 font-semibold text-slate-900">{formatDieselMetric(trip.km)}</td>
+                                        <td className="px-3 py-3 font-semibold text-slate-900">{formatDieselMetric(trip.dieselUsed)}</td>
+                                        <td className="px-3 py-3 text-slate-700">{trip.location || '-'}</td>
+                                        <td className="px-3 py-3 text-slate-700">{trip.driver || '-'}</td>
+                                        <td className="px-3 py-3 text-slate-700">{trip.purpose || '-'}</td>
+                                        <td className="px-3 py-3 text-slate-700 whitespace-nowrap">{trip.invoiceNumber || '-'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const CLIENT_SITE_OPTIONS = {
   'ABC Constructions': {
@@ -832,7 +1415,6 @@ export const DailyLogView = ({
   handleEditOrder,
   triggerDelete,
   openPreview,
-  LOADING_STATUSES,
   updateStatus,
   setDispatchModalOrderId,
   setMtcModalOrderId,
@@ -870,7 +1452,7 @@ export const DailyLogView = ({
       <div className="space-y-4">
         {displayedOrders.map((order) => (
           <Card key={order.id} className="p-5 flex flex-col md:flex-row md:items-start gap-5 hover:shadow-md transition-shadow relative">
-            {((role === 'sales' && order.orderDate >= getTodayString()) || role === 'management') && (
+            {((role === 'sale' && order.orderDate >= getTodayString()) || role === 'management') && (
               <div className="absolute top-4 right-4 flex gap-2 z-10">
                 <button onClick={(e) => { e.stopPropagation(); handleEditOrder(order); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit Order"><Pencil className="w-4 h-4" /></button>
                 <button onClick={(e) => { e.stopPropagation(); triggerDelete(order.id); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete Order"><Trash2 className="w-4 h-4" /></button>
@@ -881,14 +1463,83 @@ export const DailyLogView = ({
               {filterMode !== 'date' && <div className="absolute -top-5 left-0"><span className="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-2 py-0.5 rounded">{formatDateDisplay(order.orderDate)}</span></div>}
               <div><p className="text-xs text-slate-400 uppercase font-bold">Client</p><p className="font-bold text-slate-800">{order.client}</p><p className="text-xs text-slate-500 truncate">{order.location}</p></div>
               <div><p className="text-xs text-slate-400 uppercase font-bold">Vehicle</p><p className="font-semibold text-slate-700 bg-slate-100 inline-block px-2 rounded text-sm">{order.vehicle}</p>{(order.truckType || order.vehicleType) && <span className="ml-2 text-[10px] font-bold text-slate-500 bg-slate-200 px-1.5 rounded">{formatTruckTypeShort(order.truckType || order.vehicleType)}</span>}{order.transporter && <p className="text-[10px] text-slate-400 mt-1 truncate max-w-[120px]">{order.transporter}</p>}</div>
-              <div><p className="text-xs text-slate-400 uppercase font-bold">Load Specs</p><p className="text-sm text-slate-700"><span className="font-semibold">{order.cbm}</span> CBM</p><p className="text-xs text-slate-500">{order.size} | {order.bjm} Bags</p></div>
+              <div>
+                <p className="text-xs text-slate-400 uppercase font-bold">Load Specs</p>
+                {(() => {
+                  const cbms = [];
+                  const sizes = [];
+                  const isDispatched = order.status === 'Dispatched';
+                  
+                  if (isDispatched) {
+                    const rawSizes = String(order.size || '').split(',').map(s => s.trim()).filter(Boolean);
+                    const additional = Array.isArray(order.additionalProducts) ? order.additionalProducts : [];
+                    
+                    const totalCbm = parseFloat(order.cbm) || 0;
+                    let additionalCbmSum = 0;
+                    const additionalCbms = additional.map((p) => {
+                      const pCbm = parseFloat(p.cbm) || 0;
+                      additionalCbmSum += pCbm;
+                      return pCbm;
+                    });
+                    const primaryCbm = Math.max(0, totalCbm - additionalCbmSum);
+                    
+                    rawSizes.forEach((sz, idx) => {
+                      sizes.push(sz);
+                      if (idx === 0) {
+                        cbms.push(primaryCbm);
+                      } else {
+                        cbms.push(additionalCbms[idx - 1] || 0);
+                      }
+                    });
+                  } else {
+                    if (order.size) {
+                      sizes.push(order.size);
+                    }
+                    if (order.cbm !== undefined && order.cbm !== null && String(order.cbm).trim() !== '') {
+                      cbms.push(parseFloat(order.cbm) || 0);
+                    }
+                    
+                    const additional = Array.isArray(order.additionalProducts) ? order.additionalProducts : [];
+                    additional.forEach((p) => {
+                      if (p.size) {
+                        sizes.push(p.size);
+                      }
+                      if (p.cbm !== undefined && p.cbm !== null && String(p.cbm).trim() !== '') {
+                        cbms.push(parseFloat(p.cbm) || 0);
+                      }
+                    });
+                  }
+                  
+                  const formattedCbms = cbms.map(c => {
+                    const num = parseFloat(c);
+                    if (!Number.isFinite(num)) return String(c);
+                    return Number(num.toFixed(3)).toString();
+                  });
+                  
+                  const cbmText = formattedCbms.join(', ');
+                  const bjmVal = order.bjm;
+                  const hasBjm = bjmVal !== undefined && bjmVal !== null && String(bjmVal).trim() !== '' && Number(bjmVal) !== 0 && String(bjmVal).trim() !== '-';
+                  
+                  return (
+                    <>
+                      <p className="text-sm text-slate-700 font-semibold">{cbmText} CBM</p>
+                      <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
+                        {sizes.map((sz, idx) => (
+                          <div key={idx}>{sz}</div>
+                        ))}
+                        {hasBjm && <div>{Number(bjmVal)} Bags</div>}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
               <div><p className="text-xs text-slate-400 uppercase font-bold">Rate</p><p className="text-sm font-semibold text-slate-700">₹ {order.rate}</p></div>
 
               {order.status === 'Dispatched' && (
                 <div className="col-span-2 md:col-span-4 mt-2 pt-2 border-t border-slate-100 grid grid-cols-3 gap-2">
                   <div><p className="text-[10px] text-slate-400 uppercase font-bold">Net Wt</p><p className="text-xs font-bold text-slate-700 flex items-center"><Scale className="w-3 h-3 mr-1 text-slate-400" /> {order.netWt} kg</p></div>
                   <div><p className="text-[10px] text-slate-400 uppercase font-bold">Loading By</p><p className="text-xs font-bold text-slate-700 flex items-center"><Users className="w-3 h-3 mr-1 text-slate-400" /> {order.loadingBy}</p></div>
-                  {(order.transporter === 'ABC' || order.unloadingBy) && (<div><p className="text-[10px] text-slate-400 uppercase font-bold">Unloading By</p><p className="text-xs font-bold text-slate-700 flex items-center"><Users className="w-3 h-3 mr-1 text-slate-400" /> {order.unloadingBy || '-'}</p></div>)}
+                  {((String(order.transporter || '').trim().toUpperCase().startsWith('ABC')) || order.unloadingBy) && (<div><p className="text-[10px] text-slate-400 uppercase font-bold">Unloading By</p><p className="text-xs font-bold text-slate-700 flex items-center"><Users className="w-3 h-3 mr-1 text-slate-400" /> {order.unloadingBy || '-'}</p></div>)}
                 </div>
               )}
 
@@ -911,7 +1562,7 @@ export const DailyLogView = ({
             <div className="flex flex-col items-center justify-start pt-2 min-w-[120px] text-center"><StatusBadge status={order.status} /></div>
 
             <div className="flex flex-col gap-2 min-w-[160px] border-l pl-4 border-slate-100">
-              {role === 'sales' && (
+              {role === 'sale' && (
                 <>
                   {order.status === 'Invoiced' && <button onClick={() => openPreview('invoice', order.invoice || 'Draft', order.id, true, order.invoiceUrl)} className="w-full py-2 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 flex items-center justify-center"><Eye className="w-3 h-3 mr-1.5" /> Review & Approve</button>}
                   {!['Invoiced'].includes(order.status) && <span className="text-xs text-slate-400 text-center italic">Monitoring...</span>}
@@ -926,7 +1577,7 @@ export const DailyLogView = ({
                   {order.status === 'Dispatched' && <span className="text-xs text-green-600 font-bold text-center flex items-center justify-center"><CheckCircle className="w-3 h-3 mr-1" /> Done</span>}
                 </>
               )}
-              {role === 'accounts' && (
+              {role === 'account' && (
                 <>
                   {order.status === 'Loading Complete' && <label className="w-full py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 flex justify-center items-center cursor-pointer"><DollarSign className="w-3 h-3 mr-1" /> Upload Invoice<input type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => { const selected = e.target.files?.[0]; if (selected) handleFileUpload(order.id, 'invoice', 'Invoiced', selected); e.target.value = ''; }} /></label>}
                   {order.status === 'Dispatched' && !order.mtc && <button onClick={() => setMtcModalOrderId(order.id)} className="w-full py-2 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 flex justify-center items-center"><FileText className="w-3 h-3 mr-1.5" /> Generate MTC</button>}

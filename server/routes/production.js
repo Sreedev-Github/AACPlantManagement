@@ -19,6 +19,7 @@ const RAW_MATERIALS = [
   { desc: 'SOLUBLE OIL', unit: 'Ltr' },
   { desc: 'MOULD OIL', unit: 'Ltr' },
   { desc: 'HARDENER', unit: 'KG' },
+  { desc: 'SODIUM DICHROMATE', unit: 'KG' },
   { desc: 'CHARCOAL', unit: 'KG' },
   { desc: 'SALT', unit: 'KG' },
   { desc: 'COAL', unit: 'Ton' },
@@ -34,6 +35,18 @@ const FINISHED_STOCK_SIZES = [
 const safeNum = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+};
+
+const normalizeSizeList = (sizes = []) => {
+  const uniqueSizes = [];
+
+  for (const size of Array.isArray(sizes) ? sizes : []) {
+    const label = String(size || '').trim();
+    if (!label || uniqueSizes.includes(label)) continue;
+    uniqueSizes.push(label);
+  }
+
+  return uniqueSizes.length > 0 ? uniqueSizes : [...FINISHED_STOCK_SIZES];
 };
 
 const formatDateDdMmYyyy = (isoDate) => {
@@ -113,14 +126,15 @@ const rebuildRawItemsFromBaseline = (sourceItems, openingMap) => {
       issue,
       closing,
       remarks: String(source.remarks || ''),
+      inAutoclave: safeNum(source.inAutoclave),
     };
   });
 };
 
-const rebuildFinishedItemsFromBaseline = (sourceItems, openingMap) => {
+const rebuildFinishedItemsFromBaseline = (sourceItems, openingMap, sizes = FINISHED_STOCK_SIZES) => {
   const sourceMap = new Map((Array.isArray(sourceItems) ? sourceItems : []).map((item) => [String(item?.size || ''), item]));
 
-  return FINISHED_STOCK_SIZES.map((size, idx) => {
+  return normalizeSizeList(sizes).map((size, idx) => {
     const source = sourceMap.get(size) || {};
     const opening = safeNum(openingMap.get(size));
     const segregation = safeNum(source.segregation);
@@ -128,7 +142,9 @@ const rebuildFinishedItemsFromBaseline = (sourceItems, openingMap) => {
     const proRejection = safeNum(source.proRejection);
     const loadingRejection = safeNum(source.loadingRejection);
     const selfUse = safeNum(source.selfUse);
-    const closing = (opening + segregation) - (sale + proRejection + loadingRejection + selfUse);
+    const selfUseBjm = safeNum(source.selfUseBjm);
+    const inAutoclave = safeNum(source.inAutoclave);
+    const closing = (opening + segregation) - (sale + proRejection + loadingRejection + selfUse + selfUseBjm);
 
     return {
       id: idx,
@@ -139,7 +155,9 @@ const rebuildFinishedItemsFromBaseline = (sourceItems, openingMap) => {
       proRejection,
       loadingRejection,
       selfUse,
+      selfUseBjm,
       closing,
+      inAutoclave,
     };
   });
 };
@@ -182,10 +200,12 @@ const recalcFinishedStockChain = async (startDate, sourcePayload) => {
 
   const futureDays = sortStockDays(await collections().finishedStockDays.find({ date: { $gte: startDate } }).toArray());
   const recalculatedDays = [];
+  let activeSizes = normalizeSizeList(sourcePayload.sizes || startBaseline?.sizes || FINISHED_STOCK_SIZES);
 
   for (const day of futureDays) {
     const payload = day.date === startDate ? sourcePayload : day;
-    const items = rebuildFinishedItemsFromBaseline(payload.items, openingMap);
+    const sizes = day.date === startDate ? normalizeSizeList(sourcePayload.sizes || startBaseline?.sizes || FINISHED_STOCK_SIZES) : activeSizes;
+    const items = rebuildFinishedItemsFromBaseline(payload.items, openingMap, sizes);
     const sourceMortar = payload.mortarBag || {};
     const mortarBag = {
       opening: mortarOpening,
@@ -208,6 +228,7 @@ const recalcFinishedStockChain = async (startDate, sourcePayload) => {
         $set: {
           date: day.date,
           items,
+          sizes,
           mortarBag,
           summary,
           updatedAt,
@@ -220,6 +241,7 @@ const recalcFinishedStockChain = async (startDate, sourcePayload) => {
     recalculatedDays.push({ date: day.date, items, mortarBag, summary, updatedAt });
     openingMap = new Map(items.map((item) => [item.size, safeNum(item.closing)]));
     mortarOpening = safeNum(mortarBag.closing);
+    activeSizes = sizes;
   }
 
   return recalculatedDays;
@@ -243,6 +265,7 @@ const buildDefaultRawItems = async (date) => {
       issue: 0,
       closing: opening,
       remarks: '',
+      inAutoclave: 0,
     };
   });
 };
@@ -263,6 +286,7 @@ const recomputeRawItems = (items) => items.map((item, idx) => {
     issue,
     closing,
     remarks: String(item.remarks || ''),
+    inAutoclave: safeNum(item.inAutoclave),
   };
 });
 
@@ -273,8 +297,9 @@ const buildDefaultFinished = async (date) => {
   const prevItems = new Map((baseline?.items || []).map((i) => [i.size, safeNum(i.closing)]));
   const prevMortarClosing = safeNum(baseline?.mortarBag?.closing);
   const prevSummary = baseline?.summary || {};
+  const sizes = normalizeSizeList(baseline?.sizes || FINISHED_STOCK_SIZES);
 
-  const items = FINISHED_STOCK_SIZES.map((size, idx) => {
+  const items = sizes.map((size, idx) => {
     const opening = prevItems.get(size) || 0;
     return {
       id: idx,
@@ -285,12 +310,15 @@ const buildDefaultFinished = async (date) => {
       proRejection: 0,
       loadingRejection: 0,
       selfUse: 0,
+      selfUseBjm: 0,
       closing: opening,
+      inAutoclave: 0,
     };
   });
 
   return {
     items,
+    sizes,
     mortarBag: {
       opening: prevMortarClosing,
       receipt: 0,
@@ -308,6 +336,7 @@ const buildDefaultFinished = async (date) => {
 };
 
 const recomputeFinished = (payload) => {
+  const sizes = normalizeSizeList(payload.sizes || (Array.isArray(payload.items) ? payload.items.map((item) => item?.size) : []) || FINISHED_STOCK_SIZES);
   const items = (payload.items || []).map((item, idx) => {
     const opening = safeNum(item.opening);
     const segregation = safeNum(item.segregation);
@@ -315,7 +344,9 @@ const recomputeFinished = (payload) => {
     const proRejection = safeNum(item.proRejection);
     const loadingRejection = safeNum(item.loadingRejection);
     const selfUse = safeNum(item.selfUse);
-    const closing = (opening + segregation) - (sale + proRejection + loadingRejection + selfUse);
+    const selfUseBjm = safeNum(item.selfUseBjm);
+    const inAutoclave = safeNum(item.inAutoclave);
+    const closing = (opening + segregation) - (sale + proRejection + loadingRejection + selfUse + selfUseBjm);
 
     return {
       id: idx,
@@ -326,7 +357,9 @@ const recomputeFinished = (payload) => {
       proRejection,
       loadingRejection,
       selfUse,
+      selfUseBjm,
       closing,
+      inAutoclave,
     };
   });
 
@@ -351,7 +384,7 @@ const recomputeFinished = (payload) => {
     totalMortarSale: safeNum(payload.summary?.totalMortarSale),
   };
 
-  return { items, mortarBag, summary };
+  return { items, mortarBag, summary, sizes };
 };
 
 const writePdfHeader = (doc, title, date) => {
@@ -433,6 +466,7 @@ router.get('/production/finished/:date', async (req, res, next) => {
       return res.json({
         date,
         items: existing.items,
+        sizes: existing.sizes || FINISHED_STOCK_SIZES,
         mortarBag: existing.mortarBag,
         summary: existing.summary,
       });
@@ -469,6 +503,7 @@ router.put('/production/finished/:date', async (req, res, next) => {
       ...(appStateDoc?.finishedStock || {}),
       [date]: {
         items: payload.items,
+        sizes: payload.sizes,
         mortarBag: payload.mortarBag,
         summary: payload.summary,
         timestamp: new Date().toISOString(),
